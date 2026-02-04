@@ -21,7 +21,7 @@
         "mainImages": [
           {
             "code": "PROD-1770016821467-M1",
-            "url": "http://localhost:8080/uploads/1770016821444-216080357-b5ea0efe6db207be4203c513a817d546.png",
+            "url": "https://picsum.photos/seed/medicube/400/400",
             "originalName": "b5ea0efe6db207be4203c513a817d546.png",
             "size": 656386,
             "mimetype": "image/png",
@@ -55,7 +55,7 @@
         "mainImages": [
           {
             "code": "PROD-1770112851577-M1",
-            "url": "http://localhost:8080/uploads/1770112851573-826979581-61caATYu9mL__SX679_.jpg",
+            "url": "https://picsum.photos/seed/meebak/400/400",
             "originalName": "61caATYu9mL._SX679_.jpg",
             "size": 19068,
             "mimetype": "image/jpeg",
