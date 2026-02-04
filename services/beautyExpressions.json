@@ -1,0 +1,229 @@
+{
+  "hypeIntros": [
+    "This {product} has been blowing up on TikTok lately —",
+    "Everyone's been talking about this {product}, and I finally tried it.",
+    "I've seen this {product} everywhere on my feed, so I had to test it.",
+    "This {product} has been getting major hype lately —",
+    "Okay so this {product} went viral for a reason.",
+    "I was skeptical at first, but this {product} surprised me.",
+    "This is hands down one of the most talked-about {product}s right now.",
+    "If you haven't heard of this {product} yet, where have you been?",
+    "The buzz around this {product} is real.",
+    "So I finally caved and tried this viral {product}.",
+    "This {product} has taken over my entire skincare routine.",
+    "I keep seeing this {product} in every influencer's routine —",
+    "After months of hearing about this {product}, I finally gave in.",
+    "This {product} has been all over my explore page lately.",
+    "Okay, I need to talk about this {product} because wow."
+  ],
+  "effectClaims": {
+    "hydrating": [
+      "it delivers serious hydration without feeling heavy.",
+      "my skin has never felt this plump and bouncy.",
+      "it gives that 'just had a facial' glow.",
+      "it quenches thirsty skin like nothing else.",
+      "the hydration lasts all day, no joke.",
+      "my dry patches have completely disappeared.",
+      "it's like a tall glass of water for your face.",
+      "the moisture boost is absolutely insane.",
+      "it keeps my skin dewy without being greasy."
+    ],
+    "brightening": [
+      "it genuinely brightens up my complexion.",
+      "my dark spots have faded noticeably.",
+      "it gives that lit-from-within glow.",
+      "my skin looks so much more radiant now.",
+      "the brightening effect is *chef's kiss*.",
+      "I'm getting compliments on my skin glow constantly.",
+      "it evens out my skin tone beautifully.",
+      "my dull skin is finally looking alive again.",
+      "it's like having a permanent filter on your face."
+    ],
+    "soothing": [
+      "it calms my redness like magic.",
+      "my irritated skin finally feels at peace.",
+      "it's incredibly gentle yet effective.",
+      "perfect for when your skin is acting up.",
+      "it soothes everything almost instantly.",
+      "my sensitive skin absolutely loves this.",
+      "the calming effect is immediate and lasting.",
+      "it takes down inflammation overnight.",
+      "my reactive skin has never been happier."
+    ],
+    "antiAging": [
+      "my fine lines are definitely less visible.",
+      "it's like a filter for your face, but real.",
+      "the firming effect is actually noticeable.",
+      "my skin texture has improved so much.",
+      "it makes my skin look younger, period.",
+      "I swear my wrinkles are smoothing out.",
+      "the plumping effect is chef's kiss.",
+      "my skin feels so much more elastic now.",
+      "it gives that youthful bounce back to my skin."
+    ],
+    "acne": [
+      "my breakouts have calmed down significantly.",
+      "it keeps my pores clear without drying me out.",
+      "finally something that actually works for acne.",
+      "my skin has been so much clearer since I started using this.",
+      "it fights breakouts without being too harsh.",
+      "my acne scars are fading faster than ever.",
+      "it controls my oil without stripping my skin.",
+      "I'm seeing way fewer pimples now.",
+      "it's gentle enough for everyday use but still fights acne."
+    ],
+    "firming": [
+      "my skin feels noticeably tighter.",
+      "it gives an instant lifting effect.",
+      "my jawline looks more defined now.",
+      "the firming results are actually visible.",
+      "it's like a mini facelift in a bottle.",
+      "my skin has that sculpted look now.",
+      "the tightening effect lasts all day.",
+      "my pores look smaller and skin looks lifted."
+    ],
+    "nourishing": [
+      "it deeply nourishes without clogging pores.",
+      "my skin barrier has never been stronger.",
+      "it feeds my skin exactly what it needs.",
+      "the nourishing effect is incredible.",
+      "my skin feels so healthy and balanced now.",
+      "it repairs and strengthens my skin overnight.",
+      "my skin is thriving since I started using this."
+    ]
+  },
+  "textureFeel": {
+    "lightweight": [
+      "The texture is super lightweight — like water, almost.",
+      "It sinks in instantly, no residue at all.",
+      "Feels like nothing on your skin, in the best way.",
+      "It's so light, you forget you even applied it.",
+      "Perfect for layering without feeling heavy.",
+      "It absorbs in seconds, leaving skin soft.",
+      "The weightless formula is perfect for summer.",
+      "It disappears into the skin immediately."
+    ],
+    "creamy": [
+      "The texture is rich but not greasy at all.",
+      "It melts into the skin beautifully.",
+      "Creamy enough to feel luxurious, but still absorbs well.",
+      "It has that satisfying, cushiony feel.",
+      "Rich texture that doesn't clog pores — love that.",
+      "The cream glides on like butter.",
+      "It feels indulgent but never heavy.",
+      "The richness is perfect for dry skin types."
+    ],
+    "gel": [
+      "The gel texture is so refreshing, especially in summer.",
+      "It has that bouncy, jelly-like consistency I love.",
+      "Cooling and lightweight — perfect for oily skin.",
+      "The gel formula absorbs in seconds.",
+      "It's like a drink of water for your face.",
+      "The jelly texture is oddly satisfying to apply.",
+      "It gives an instant cooling sensation.",
+      "The gel-to-water formula is so unique."
+    ],
+    "serum": [
+      "The serum texture is silky smooth.",
+      "A few drops go a long way.",
+      "It spreads easily without tugging.",
+      "The consistency is perfect — not too thick, not too watery.",
+      "Glides on like a dream.",
+      "The serum absorbs beautifully under moisturizer.",
+      "It has that luxurious, slippery feel.",
+      "The dropper makes application so easy."
+    ],
+    "oil": [
+      "The oil sinks in surprisingly fast.",
+      "It's not greasy at all, just pure glow.",
+      "The oil texture gives the most amazing shine.",
+      "It seals in moisture without feeling heavy.",
+      "A little goes such a long way.",
+      "The oil gives that expensive, glossy finish."
+    ],
+    "balm": [
+      "The balm melts on contact with skin.",
+      "It transforms from solid to silky in seconds.",
+      "The balmy texture is so comforting.",
+      "It creates a protective barrier that I love.",
+      "Perfect for slugging or overnight treatments."
+    ]
+  },
+  "verdicts": {
+    "highlyRecommend": [
+      "Honestly? This is a must-try. Highly recommend!",
+      "If you're on the fence, just get it. You won't regret it.",
+      "This is going straight into my holy grail rotation.",
+      "10/10 would repurchase. No questions asked.",
+      "Worth every penny. This one's a keeper.",
+      "I'm obsessed, and I think you will be too.",
+      "This is the real deal. Get it before it sells out.",
+      "Absolutely adding this to my permanent routine.",
+      "Trust me on this one — your skin will thank you.",
+      "This deserves all the hype it's getting.",
+      "I've already bought backups. That's how much I love it.",
+      "If you only try one new product this year, make it this one."
+    ],
+    "recommendWithNote": [
+      "Great product overall — just patch test first if you have sensitive skin.",
+      "I'd recommend this, especially if you're into that dewy look.",
+      "Solid choice if you're looking for something effective yet gentle.",
+      "Works well for me — results may vary depending on skin type.",
+      "A good option if you want results without breaking the bank.",
+      "Definitely worth trying, especially for the price point.",
+      "I'd suggest starting slow and building up usage.",
+      "Great for most skin types, but oily skin might want to be careful."
+    ],
+    "mixed": [
+      "It's decent, but not life-changing for me personally.",
+      "Good product, though there might be better options out there.",
+      "It works, but I expected a bit more for the price.",
+      "Not bad, but not my new favorite either.",
+      "Try it if you're curious, but manage your expectations.",
+      "It's fine, but I probably won't repurchase.",
+      "Mixed feelings on this one — it's okay but not amazing."
+    ]
+  },
+  "casualFillers": [
+    "and honestly?",
+    "— and I get it now.",
+    "so yeah,",
+    "like seriously,",
+    "no cap,",
+    "I mean,",
+    "tbh,",
+    "real talk:",
+    "plot twist:",
+    "here's the thing:",
+    "not gonna lie,",
+    "literally,",
+    "lowkey,",
+    "okay but",
+    "and let me tell you,"
+  ],
+  "usageNotes": [
+    "Works great under makeup.",
+    "Perfect for both AM and PM routines.",
+    "Layers beautifully with other products.",
+    "No pilling whatsoever.",
+    "Makeup sits so well on top of this.",
+    "Great as the last step before sunscreen.",
+    "I use this morning and night.",
+    "It plays well with actives too.",
+    "Perfect for prepping skin before foundation."
+  ],
+  "productTypes": {
+    "serum": "serum",
+    "cream": "cream",
+    "moisturizer": "moisturizer",
+    "toner": "toner",
+    "essence": "essence",
+    "ampoule": "ampoule",
+    "mask": "mask",
+    "cleanser": "cleanser",
+    "sunscreen": "sunscreen",
+    "oil": "oil",
+    "balm": "balm",
+    "default": "product"
+  }
+}
