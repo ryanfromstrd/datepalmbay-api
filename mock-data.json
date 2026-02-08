@@ -14,7 +14,10 @@
       "policy": {
         "deliveryPolicy": ".",
         "refundPolicy": ".",
-        "exchangePolicy": "."
+        "exchangePolicy": ".",
+        "shippingCost": 20,
+        "shippingCostType": "CONDITIONAL",
+        "freeShippingThreshold": 100
       },
       "detailInfo": "PHA+I21lZGljdWJlLCZuYnNwOyNQRFJOPC9wPg==",
       "files": {
@@ -32,7 +35,10 @@
       },
       "groupBuyTiers": [],
       "createdAt": "2026-02-02T07:20:21.467Z",
-      "updatedAt": "2026-02-03T09:29:54.830Z"
+      "updatedAt": "2026-02-06T15:01:56.927Z",
+      "shippingCostType": "CONDITIONAL",
+      "shippingCost": 20,
+      "freeShippingThreshold": 100
     },
     {
       "productCode": "PROD-1770112851577",
@@ -3899,5 +3905,5 @@
       "createdAt": "2026-02-03T10:01:06.906Z"
     }
   ],
-  "savedAt": "2026-02-03T10:06:56.213Z"
+  "savedAt": "2026-02-06T15:01:56.927Z"
 }

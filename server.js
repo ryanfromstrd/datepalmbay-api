@@ -257,7 +257,7 @@ const members = [
   }
 ];
 
-// Mock 로그인 사용자 데이터 (id와 password 포함)
+// Mock 로그인 사용자 데이터 (id와 password 포함 + 쿠폰 자격 조건용 필드)
 const users = [
   {
     id: 'test',
@@ -267,7 +267,13 @@ const users = [
     phone: '010-1111-2222',
     email: 'test@datepalmbay.com',
     createAt: new Date('2024-01-01').toISOString(),
-    status: 'ACTIVE'
+    status: 'ACTIVE',
+    // 쿠폰 자격 조건용 추가 필드
+    memberLevel: 'SILVER',
+    birthMonth: 2, // 2월 생일
+    lastPurchaseDate: new Date('2025-01-20').toISOString(),
+    totalPurchaseCount: 5,
+    totalPurchaseAmount: 250
   },
   {
     id: 'demo',
@@ -277,7 +283,12 @@ const users = [
     phone: '010-3333-4444',
     email: 'demo@datepalmbay.com',
     createAt: new Date('2024-01-15').toISOString(),
-    status: 'ACTIVE'
+    status: 'ACTIVE',
+    memberLevel: 'GOLD',
+    birthMonth: 6,
+    lastPurchaseDate: new Date('2025-02-01').toISOString(),
+    totalPurchaseCount: 15,
+    totalPurchaseAmount: 750
   },
   {
     id: 'customer1',
@@ -287,7 +298,12 @@ const users = [
     phone: '010-5555-6666',
     email: 'customer1@datepalmbay.com',
     createAt: new Date('2024-02-01').toISOString(),
-    status: 'ACTIVE'
+    status: 'ACTIVE',
+    memberLevel: 'BRONZE',
+    birthMonth: 9,
+    lastPurchaseDate: new Date('2024-10-15').toISOString(), // 휴면 유저 (90일+ 미구매)
+    totalPurchaseCount: 2,
+    totalPurchaseAmount: 80
   },
   {
     id: 'customer2',
@@ -297,7 +313,12 @@ const users = [
     phone: '010-7777-8888',
     email: 'customer2@datepalmbay.com',
     createAt: new Date('2024-02-05').toISOString(),
-    status: 'ACTIVE'
+    status: 'ACTIVE',
+    memberLevel: 'VIP',
+    birthMonth: 12,
+    lastPurchaseDate: new Date('2025-02-05').toISOString(),
+    totalPurchaseCount: 30,
+    totalPurchaseAmount: 2500
   },
   {
     id: 'user1',
@@ -306,8 +327,13 @@ const users = [
     name: '박사용자',
     phone: '010-9999-0000',
     email: 'user1@datepalmbay.com',
-    createAt: new Date('2024-02-10').toISOString(),
-    status: 'ACTIVE'
+    createAt: new Date('2025-01-25').toISOString(), // 신규 회원 (14일 이내)
+    status: 'ACTIVE',
+    memberLevel: 'BRONZE',
+    birthMonth: 3,
+    lastPurchaseDate: null,
+    totalPurchaseCount: 0,
+    totalPurchaseAmount: 0
   },
   {
     id: 'user2',
@@ -317,7 +343,24 @@ const users = [
     phone: '010-1234-5678',
     email: 'user2@datepalmbay.com',
     createAt: new Date('2024-02-15').toISOString(),
-    status: 'ACTIVE'
+    status: 'ACTIVE',
+    memberLevel: 'SILVER',
+    birthMonth: 8,
+    lastPurchaseDate: new Date('2025-01-10').toISOString(),
+    totalPurchaseCount: 8,
+    totalPurchaseAmount: 400
+  }
+];
+
+// 유저별 다운로드한 쿠폰 저장소
+const userCoupons = [
+  {
+    id: 'UC-001',
+    userId: 'USER-001',
+    couponCode: 'CPN-SPRING10',
+    downloadedAt: '2025-02-01T10:00:00Z',
+    usedAt: null,
+    usedOrderCode: null
   }
 ];
 
@@ -506,6 +549,10 @@ app.post('/datepalm-bay/api/admin/product/create', upload.fields([
         detailImages: detailImages
       },
       groupBuyTiers: requestData.groupBuyTiers || [],
+      // 배송비 관련 필드
+      shippingCostType: requestData.shippingCostType || 'FREE',
+      shippingCost: requestData.shippingCost || 0,
+      freeShippingThreshold: requestData.freeShippingThreshold || 0,
       createdAt: new Date().toISOString()
     };
 
@@ -663,6 +710,10 @@ app.put('/datepalm-bay/api/admin/product/edit', upload.fields([
         detailImages: finalDetailImages
       },
       groupBuyTiers: requestData.groupBuyTiers || [],
+      // 배송비 관련 필드
+      shippingCostType: requestData.shippingCostType || 'FREE',
+      shippingCost: requestData.shippingCost || 0,
+      freeShippingThreshold: requestData.freeShippingThreshold || 0,
       updatedAt: new Date().toISOString()
     };
     saveData(); // 파일에 저장
@@ -836,7 +887,11 @@ app.get('/datepalm-bay/api/admin/product/detail/:code', (req, res) => {
       order: img.order
     })),
     detailInfo: product.detailInfo || '',
-    groupBuyTiers: product.groupBuyTiers || []
+    groupBuyTiers: product.groupBuyTiers || [],
+    // 배송비 관련 필드
+    shippingCostType: product.shippingCostType || 'FREE',
+    shippingCost: product.shippingCost || 0,
+    freeShippingThreshold: product.freeShippingThreshold || 0
   };
 
   console.log('조회 성공:', product.productName);
@@ -1204,7 +1259,11 @@ app.get('/datepalm-bay/api/mvp/product/normal/detail/:code', (req, res) => {
     refundPolicy: product.policy?.refundPolicy || '',
     exchangePolicy: product.policy?.exchangePolicy || '',
     canReviewWrite: false,
-    groupBuyTiers: product.groupBuyTiers || []
+    groupBuyTiers: product.groupBuyTiers || [],
+    // 배송비 관련 필드 (상위 레벨 또는 policy 객체에서 가져옴)
+    shippingCostType: product.shippingCostType || product.policy?.shippingCostType || 'FREE',
+    shippingCost: product.shippingCost ?? product.policy?.shippingCost ?? 0,
+    freeShippingThreshold: product.freeShippingThreshold ?? product.policy?.freeShippingThreshold ?? 0
   };
 
   console.log('조회 성공:', product.productName);
@@ -1783,6 +1842,256 @@ const events = [
     eventType: 'SALE',
     priority: 3,
     createdAt: '2024-11-01T00:00:00Z'
+  }
+];
+
+// ======================================
+// Mock Coupons Data (확장: 대상 조건 + 쿠폰 유형)
+// ======================================
+const coupons = [
+  {
+    code: 'CPN-WELCOME15',
+    name: '15% Welcome Coupon',
+    description: 'Welcome discount for new members! Join us and save on your first order.',
+    discountType: 'PERCENT',
+    discountValue: 15,
+    minOrderAmount: 30,
+    maxDiscountAmount: 50,
+    startDate: '2026-01-01T00:00:00Z',
+    endDate: '2027-12-31T23:59:59Z',
+    status: 'ACTIVE',
+    usageCount: 145,
+    usageLimit: 1000,
+    createdAt: '2026-01-01T00:00:00Z',
+    updatedAt: '2026-01-01T00:00:00Z',
+    // 새 필드
+    couponType: 'WELCOME',
+    isDownloadable: true,
+    isAutoIssue: false,
+    targetCondition: {
+      newMemberOnly: true,
+      newMemberDays: 30 // 가입 후 30일 이내
+    },
+    applicableCategories: [], // 빈 배열 = 전체 카테고리
+    applicableProductCodes: [],
+    stackable: false
+  },
+  {
+    code: 'CPN-SPRING10',
+    name: '10% Spring Sale',
+    description: 'Spring season special discount for all members!',
+    discountType: 'PERCENT',
+    discountValue: 10,
+    minOrderAmount: 20,
+    maxDiscountAmount: 30,
+    startDate: '2026-01-01T00:00:00Z',
+    endDate: '2027-05-31T23:59:59Z',
+    status: 'ACTIVE',
+    usageCount: 89,
+    usageLimit: 500,
+    createdAt: '2026-02-15T00:00:00Z',
+    updatedAt: '2026-02-15T00:00:00Z',
+    couponType: 'GENERAL',
+    isDownloadable: true,
+    isAutoIssue: false,
+    targetCondition: {}, // 전체 회원
+    applicableCategories: [],
+    applicableProductCodes: [],
+    stackable: true
+  },
+  {
+    code: 'CPN-FIXED5',
+    name: '$5 Off Coupon',
+    description: 'Fixed $5 discount on orders over $40',
+    discountType: 'FIXED',
+    discountValue: 5,
+    minOrderAmount: 40,
+    maxDiscountAmount: null,
+    startDate: '2026-01-01T00:00:00Z',
+    endDate: '2027-06-30T23:59:59Z',
+    status: 'ACTIVE',
+    usageCount: 234,
+    usageLimit: null,
+    createdAt: '2026-01-15T00:00:00Z',
+    updatedAt: '2026-01-15T00:00:00Z',
+    couponType: 'GENERAL',
+    isDownloadable: true,
+    isAutoIssue: false,
+    targetCondition: {},
+    applicableCategories: [],
+    applicableProductCodes: [],
+    stackable: true
+  },
+  {
+    code: 'CPN-VIP20',
+    name: '20% VIP Exclusive',
+    description: 'Exclusive 20% discount for our VIP members. Thank you for your loyalty!',
+    discountType: 'PERCENT',
+    discountValue: 20,
+    minOrderAmount: 50,
+    maxDiscountAmount: 100,
+    startDate: '2025-01-01T00:00:00Z',
+    endDate: '2027-12-31T23:59:59Z',
+    status: 'ACTIVE',
+    usageCount: 12,
+    usageLimit: 100,
+    createdAt: '2025-01-01T00:00:00Z',
+    updatedAt: '2025-01-01T00:00:00Z',
+    couponType: 'VIP_EXCLUSIVE',
+    isDownloadable: true,
+    isAutoIssue: false,
+    targetCondition: {
+      memberLevels: ['VIP']
+    },
+    applicableCategories: [],
+    applicableProductCodes: [],
+    stackable: false
+  },
+  {
+    code: 'CPN-COMEBACK10',
+    name: 'We Miss You! 10% Off',
+    description: 'Come back and enjoy 10% off on your next purchase!',
+    discountType: 'PERCENT',
+    discountValue: 10,
+    minOrderAmount: 25,
+    maxDiscountAmount: 40,
+    startDate: '2025-01-01T00:00:00Z',
+    endDate: '2027-12-31T23:59:59Z',
+    status: 'ACTIVE',
+    usageCount: 45,
+    usageLimit: 500,
+    createdAt: '2025-01-01T00:00:00Z',
+    updatedAt: '2025-01-01T00:00:00Z',
+    couponType: 'COMEBACK',
+    isDownloadable: true,
+    isAutoIssue: false,
+    targetCondition: {
+      dormantDays: 60 // 60일 이상 미구매 회원
+    },
+    applicableCategories: [],
+    applicableProductCodes: [],
+    stackable: true
+  },
+  {
+    code: 'CPN-BIRTHDAY15',
+    name: 'Happy Birthday! 15% Off',
+    description: 'Celebrate your birthday with a special 15% discount!',
+    discountType: 'PERCENT',
+    discountValue: 15,
+    minOrderAmount: 30,
+    maxDiscountAmount: 50,
+    startDate: '2025-01-01T00:00:00Z',
+    endDate: '2027-12-31T23:59:59Z',
+    status: 'ACTIVE',
+    usageCount: 28,
+    usageLimit: null,
+    createdAt: '2025-01-01T00:00:00Z',
+    updatedAt: '2025-01-01T00:00:00Z',
+    couponType: 'BIRTHDAY',
+    isDownloadable: true,
+    isAutoIssue: false,
+    targetCondition: {
+      birthdayMonth: true // 이번 달 생일인 회원
+    },
+    applicableCategories: [],
+    applicableProductCodes: [],
+    stackable: true
+  },
+  {
+    code: 'CPN-GOLD15',
+    name: 'Gold Member Special',
+    description: '15% off for Gold and VIP members',
+    discountType: 'PERCENT',
+    discountValue: 15,
+    minOrderAmount: 40,
+    maxDiscountAmount: 60,
+    startDate: '2025-01-01T00:00:00Z',
+    endDate: '2027-12-31T23:59:59Z',
+    status: 'ACTIVE',
+    usageCount: 67,
+    usageLimit: 300,
+    createdAt: '2025-01-15T00:00:00Z',
+    updatedAt: '2025-01-15T00:00:00Z',
+    couponType: 'GENERAL',
+    isDownloadable: true,
+    isAutoIssue: false,
+    targetCondition: {
+      memberLevels: ['GOLD', 'VIP']
+    },
+    applicableCategories: [],
+    applicableProductCodes: [],
+    stackable: false
+  },
+  {
+    code: 'CPN-BEAUTY10',
+    name: 'K-Beauty 10% Off',
+    description: 'Special discount for K-Beauty products',
+    discountType: 'PERCENT',
+    discountValue: 10,
+    minOrderAmount: 30,
+    maxDiscountAmount: 30,
+    startDate: '2025-01-01T00:00:00Z',
+    endDate: '2027-06-30T23:59:59Z',
+    status: 'ACTIVE',
+    usageCount: 156,
+    usageLimit: 1000,
+    createdAt: '2025-01-20T00:00:00Z',
+    updatedAt: '2025-01-20T00:00:00Z',
+    couponType: 'CATEGORY',
+    isDownloadable: true,
+    isAutoIssue: false,
+    targetCondition: {},
+    applicableCategories: ['BEAUTY'],
+    applicableProductCodes: [],
+    stackable: true
+  },
+  {
+    code: 'CPN-FIRST25',
+    name: '25% First Purchase',
+    description: 'Get 25% off on your very first order!',
+    discountType: 'PERCENT',
+    discountValue: 25,
+    minOrderAmount: 50,
+    maxDiscountAmount: 75,
+    startDate: '2025-01-01T00:00:00Z',
+    endDate: '2027-12-31T23:59:59Z',
+    status: 'ACTIVE',
+    usageCount: 89,
+    usageLimit: 500,
+    createdAt: '2025-01-01T00:00:00Z',
+    updatedAt: '2025-01-01T00:00:00Z',
+    couponType: 'FIRST_PURCHASE',
+    isDownloadable: true,
+    isAutoIssue: false,
+    targetCondition: {
+      minPurchaseCount: 0 // 구매 이력이 없는 회원만
+    },
+    applicableCategories: [],
+    applicableProductCodes: [],
+    stackable: false
+  },
+  {
+    code: 'CPN-EXPIRED',
+    name: 'Expired Coupon',
+    description: 'This coupon has expired',
+    discountType: 'PERCENT',
+    discountValue: 20,
+    minOrderAmount: 50,
+    maxDiscountAmount: 100,
+    startDate: '2024-01-01T00:00:00Z',
+    endDate: '2024-12-31T23:59:59Z',
+    status: 'EXPIRED',
+    usageCount: 500,
+    usageLimit: 500,
+    createdAt: '2024-01-01T00:00:00Z',
+    updatedAt: '2024-12-31T23:59:59Z',
+    couponType: 'GENERAL',
+    isDownloadable: false,
+    isAutoIssue: false,
+    targetCondition: {},
+    applicableCategories: [],
+    applicableProductCodes: [],
+    stackable: false
   }
 ];
 
@@ -2843,35 +3152,82 @@ app.post('/datepalm-bay/api/mvp/order/create', async (req, res) => {
     address,
     detailAddress,
     deliveryMemo,
-    currency = 'USD'
+    currency = 'USD',
+    // 번들 주문 필드
+    isBundleOrder,
+    bundleItems,
+    totalAmount,
+    shippingCost,
+    couponCode,
+    couponDiscount
   } = orderData;
-
-  // 상품 조회
-  const product = products.find(p => p.productCode === productCode);
-  if (!product) {
-    return res.status(404).json({
-      ok: false,
-      data: null,
-      message: 'Product not found'
-    });
-  }
 
   // 주문 ID 생성
   const orderId = `ORDER-${Date.now()}-${Math.random().toString(36).substring(2, 8).toUpperCase()}`;
 
-  // 금액 계산 (USD 기준 - 국제 결제용)
-  const priceUSD = product.productPriceUSD || product.productPrice;
-  const amount = priceUSD * quantity;
-  const orderName = quantity > 1
-    ? `${product.productName} and ${quantity - 1} more`
-    : product.productName;
+  let amount;
+  let orderName;
+
+  // 번들 주문인 경우
+  if (isBundleOrder && bundleItems && bundleItems.length > 0) {
+    // 프론트엔드에서 계산한 총액 사용
+    amount = totalAmount || bundleItems.reduce((sum, item) => sum + (item.price * item.quantity), 0);
+
+    // 쿠폰 할인 적용
+    if (couponDiscount) {
+      amount = amount - couponDiscount;
+    }
+
+    // 배송비 추가 (이미 totalAmount에 포함되어 있으면 중복 추가 안함)
+    // totalAmount가 있으면 이미 배송비가 포함되어 있음
+
+    orderName = bundleItems.length > 1
+      ? `Bundle Order (${bundleItems.length} items)`
+      : products.find(p => p.productCode === bundleItems[0].productCode)?.productName || 'Product';
+
+    console.log(`📦 번들 주문: ${bundleItems.length}개 상품`);
+    console.log(`  총액: $${amount}`);
+    console.log(`  쿠폰 할인: $${couponDiscount || 0}`);
+    console.log(`  배송비: $${shippingCost || 0}`);
+  } else {
+    // 단일 상품 주문
+    const product = products.find(p => p.productCode === productCode);
+    if (!product) {
+      return res.status(404).json({
+        ok: false,
+        data: null,
+        message: 'Product not found'
+      });
+    }
+
+    // 금액 계산 (USD 기준 - 국제 결제용)
+    const priceUSD = product.productPriceUSD || product.productPrice;
+    amount = priceUSD * quantity;
+
+    // 쿠폰 할인 적용
+    if (couponDiscount) {
+      amount = amount - couponDiscount;
+    }
+
+    // 배송비 추가
+    if (shippingCost) {
+      amount = amount + shippingCost;
+    }
+
+    orderName = quantity > 1
+      ? `${product.productName} and ${quantity - 1} more`
+      : product.productName;
+  }
+
+  // 금액이 0 이하가 되지 않도록
+  amount = Math.max(0, amount);
 
   // 주문 정보 저장
   const newOrder = {
     orderId,
-    productCode,
-    productName: product.productName,
-    quantity,
+    productCode: isBundleOrder ? bundleItems.map(i => i.productCode).join(',') : productCode,
+    productName: orderName,
+    quantity: isBundleOrder ? bundleItems.reduce((sum, i) => sum + i.quantity, 0) : quantity,
     amount,
     currency,
     orderType: orderType || 'NORMAL',
@@ -2885,6 +3241,11 @@ app.post('/datepalm-bay/api/mvp/order/create', async (req, res) => {
     address,
     detailAddress,
     deliveryMemo,
+    isBundleOrder: isBundleOrder || false,
+    bundleItems: isBundleOrder ? bundleItems : null,
+    couponCode: couponCode || null,
+    couponDiscount: couponDiscount || 0,
+    shippingCost: shippingCost || 0,
     status: 'PENDING',
     paypalOrderId: null,
     captureId: null,
@@ -2896,8 +3257,8 @@ app.post('/datepalm-bay/api/mvp/order/create', async (req, res) => {
   customerOrders.push(newOrder);
 
   console.log(`✅ 주문 생성 완료: ${orderId}`);
-  console.log(`  상품: ${product.productName}`);
-  console.log(`  수량: ${quantity}`);
+  console.log(`  상품: ${orderName}`);
+  console.log(`  수량: ${newOrder.quantity}`);
   console.log(`  금액: $${amount.toFixed(2)} ${currency}`);
 
   res.json({
@@ -3123,6 +3484,717 @@ app.get('/datepalm-bay/api/mvp/orders', (req, res) => {
   });
 });
 
+// ======================================
+// Admin - Coupon Management
+// ======================================
+
+// Admin - Coupon List
+app.get('/datepalm-bay/api/admin/coupon/list', (req, res) => {
+  console.log('\n=== [Admin] Coupon List ===');
+  const pageNo = parseInt(req.query.pageNo) || 0;
+  const pageSize = parseInt(req.query.pageSize) || 10;
+  const { status, keyword } = req.query;
+
+  // Update coupon statuses based on current date
+  const now = new Date();
+  coupons.forEach(coupon => {
+    const endDate = new Date(coupon.endDate);
+    if (now > endDate && coupon.status !== 'INACTIVE') {
+      coupon.status = 'EXPIRED';
+    }
+  });
+
+  let filteredCoupons = [...coupons];
+
+  // Filter by status
+  if (status) {
+    filteredCoupons = filteredCoupons.filter(c => c.status === status);
+  }
+
+  // Filter by keyword
+  if (keyword) {
+    filteredCoupons = filteredCoupons.filter(c =>
+      c.name.toLowerCase().includes(keyword.toLowerCase()) ||
+      c.code.toLowerCase().includes(keyword.toLowerCase())
+    );
+  }
+
+  // Sort by createdAt (newest first)
+  filteredCoupons.sort((a, b) => new Date(b.createdAt) - new Date(a.createdAt));
+
+  const start = pageNo * pageSize;
+  const end = start + pageSize;
+  const paginatedCoupons = filteredCoupons.slice(start, end);
+
+  res.json({
+    ok: true,
+    data: {
+      content: paginatedCoupons,
+      pageable: {
+        pageNumber: pageNo,
+        pageSize: pageSize
+      },
+      totalElements: filteredCoupons.length,
+      totalPages: Math.ceil(filteredCoupons.length / pageSize),
+      size: pageSize,
+      number: pageNo,
+      first: pageNo === 0,
+      last: pageNo >= Math.floor(filteredCoupons.length / pageSize),
+      numberOfElements: paginatedCoupons.length
+    },
+    message: 'Admin coupon list retrieved successfully'
+  });
+});
+
+// Admin - Coupon Detail
+app.get('/datepalm-bay/api/admin/coupon/detail/:code', (req, res) => {
+  console.log('\n=== [Admin] Coupon Detail ===');
+  const { code } = req.params;
+
+  const coupon = coupons.find(c => c.code === code);
+
+  if (!coupon) {
+    return res.status(404).json({
+      ok: false,
+      data: null,
+      message: 'Coupon not found'
+    });
+  }
+
+  // Update status
+  const now = new Date();
+  const endDate = new Date(coupon.endDate);
+  if (now > endDate && coupon.status !== 'INACTIVE') {
+    coupon.status = 'EXPIRED';
+  }
+
+  res.json({
+    ok: true,
+    data: coupon,
+    message: 'Coupon detail retrieved successfully'
+  });
+});
+
+// Admin - Create Coupon
+app.post('/datepalm-bay/api/admin/coupon/create', express.json(), (req, res) => {
+  console.log('\n=== [Admin] Create Coupon ===');
+
+  const requestData = req.body;
+  const code = `CPN-${Date.now()}`;
+
+  const newCoupon = {
+    code,
+    name: requestData.name,
+    description: requestData.description || '',
+    discountType: requestData.discountType,
+    discountValue: requestData.discountValue,
+    minOrderAmount: requestData.minOrderAmount || 0,
+    maxDiscountAmount: requestData.maxDiscountAmount || null,
+    startDate: requestData.startDate,
+    endDate: requestData.endDate,
+    status: 'ACTIVE',
+    usageCount: 0,
+    usageLimit: requestData.usageLimit || null,
+    createdAt: new Date().toISOString(),
+    updatedAt: new Date().toISOString()
+  };
+
+  coupons.push(newCoupon);
+
+  console.log(`Coupon created: ${code}`);
+
+  res.json({
+    ok: true,
+    data: newCoupon,
+    message: 'Coupon created successfully'
+  });
+});
+
+// Admin - Edit Coupon
+app.put('/datepalm-bay/api/admin/coupon/edit', express.json(), (req, res) => {
+  console.log('\n=== [Admin] Edit Coupon ===');
+
+  const requestData = req.body;
+  const couponIndex = coupons.findIndex(c => c.code === requestData.code);
+
+  if (couponIndex === -1) {
+    return res.status(404).json({
+      ok: false,
+      data: null,
+      message: 'Coupon not found'
+    });
+  }
+
+  const existingCoupon = coupons[couponIndex];
+
+  coupons[couponIndex] = {
+    ...existingCoupon,
+    name: requestData.name,
+    description: requestData.description || '',
+    discountType: requestData.discountType,
+    discountValue: requestData.discountValue,
+    minOrderAmount: requestData.minOrderAmount || 0,
+    maxDiscountAmount: requestData.maxDiscountAmount || null,
+    startDate: requestData.startDate,
+    endDate: requestData.endDate,
+    status: requestData.status || existingCoupon.status,
+    usageLimit: requestData.usageLimit || null,
+    updatedAt: new Date().toISOString()
+  };
+
+  console.log(`Coupon updated: ${requestData.code}`);
+
+  res.json({
+    ok: true,
+    data: coupons[couponIndex],
+    message: 'Coupon updated successfully'
+  });
+});
+
+// Admin - Delete Coupon
+app.delete('/datepalm-bay/api/admin/coupon/delete/:code', (req, res) => {
+  console.log('\n=== [Admin] Delete Coupon ===');
+  const { code } = req.params;
+
+  const couponIndex = coupons.findIndex(c => c.code === code);
+
+  if (couponIndex === -1) {
+    return res.status(404).json({
+      ok: false,
+      data: null,
+      message: 'Coupon not found'
+    });
+  }
+
+  coupons.splice(couponIndex, 1);
+
+  console.log(`Coupon deleted: ${code}`);
+
+  res.json({
+    ok: true,
+    data: null,
+    message: 'Coupon deleted successfully'
+  });
+});
+
+// Frontend - Get Available Coupons (for product page)
+app.get('/datepalm-bay/api/mvp/coupons/available', (req, res) => {
+  console.log('\n=== [Frontend] Available Coupons ===');
+
+  const now = new Date();
+  const availableCoupons = coupons.filter(coupon => {
+    const startDate = new Date(coupon.startDate);
+    const endDate = new Date(coupon.endDate);
+    return coupon.status === 'ACTIVE' && now >= startDate && now <= endDate;
+  });
+
+  res.json({
+    ok: true,
+    data: availableCoupons.map(c => ({
+      code: c.code,
+      name: c.name,
+      description: c.description,
+      discountType: c.discountType,
+      discountValue: c.discountValue,
+      minOrderAmount: c.minOrderAmount,
+      maxDiscountAmount: c.maxDiscountAmount,
+      endDate: c.endDate
+    })),
+    message: 'Available coupons retrieved successfully'
+  });
+});
+
+// ======================================
+// Frontend - Coupon Center APIs (서버 저장 방식)
+// ======================================
+
+// 토큰에서 userId 추출 함수
+// 토큰 형식: mock-token-{userId}-{timestamp}
+function extractUserIdFromToken(token) {
+  if (!token) return null;
+
+  // mock-token-{userId}-{timestamp} 형식 처리
+  if (token.startsWith('mock-token-')) {
+    const parts = token.split('-');
+    // parts: ['mock', 'token', '{userId}', '{timestamp}']
+    if (parts.length >= 4) {
+      // userId가 여러 단어인 경우 (예: USER-001) 처리
+      // mock-token-USER-001-1234567890 → parts = ['mock', 'token', 'USER', '001', '1234567890']
+      // 마지막은 timestamp이므로 제외하고 3번째부터 합침
+      const userIdParts = parts.slice(2, -1);
+      return userIdParts.join('-');
+    }
+  }
+
+  // 다른 형식은 그대로 반환
+  return token;
+}
+
+// 유저의 쿠폰 자격 조건 확인 함수
+function checkCouponEligibility(user, coupon) {
+  const condition = coupon.targetCondition || {};
+  const now = new Date();
+
+  // 조건이 없으면 모든 회원 가능
+  if (Object.keys(condition).length === 0) {
+    return { eligible: true };
+  }
+
+  // 회원 등급 조건
+  if (condition.memberLevels && condition.memberLevels.length > 0) {
+    if (!condition.memberLevels.includes(user.memberLevel)) {
+      return { eligible: false, reason: `${condition.memberLevels.join(' or ')} members only` };
+    }
+  }
+
+  // 신규 회원 조건
+  if (condition.newMemberOnly) {
+    const createdAt = new Date(user.createAt);
+    const daysSinceJoin = Math.floor((now - createdAt) / (1000 * 60 * 60 * 24));
+    const maxDays = condition.newMemberDays || 30;
+    if (daysSinceJoin > maxDays) {
+      return { eligible: false, reason: `New members only (within ${maxDays} days)` };
+    }
+  }
+
+  // 휴면 회원 조건 (N일 이상 미구매)
+  if (condition.dormantDays) {
+    if (!user.lastPurchaseDate) {
+      // 구매 이력이 없으면 휴면 조건 충족
+    } else {
+      const lastPurchase = new Date(user.lastPurchaseDate);
+      const daysSincePurchase = Math.floor((now - lastPurchase) / (1000 * 60 * 60 * 24));
+      if (daysSincePurchase < condition.dormantDays) {
+        return { eligible: false, reason: `For customers who haven't purchased in ${condition.dormantDays}+ days` };
+      }
+    }
+  }
+
+  // 최소 구매 횟수 조건
+  if (condition.minPurchaseCount !== undefined) {
+    if (condition.minPurchaseCount === 0) {
+      // 첫 구매 쿠폰: 구매 이력이 없어야 함
+      if (user.totalPurchaseCount > 0) {
+        return { eligible: false, reason: 'First purchase only' };
+      }
+    } else if (user.totalPurchaseCount < condition.minPurchaseCount) {
+      return { eligible: false, reason: `Requires ${condition.minPurchaseCount}+ purchases` };
+    }
+  }
+
+  // 최소 누적 구매금액 조건
+  if (condition.minTotalPurchaseAmount) {
+    if (user.totalPurchaseAmount < condition.minTotalPurchaseAmount) {
+      return { eligible: false, reason: `Requires $${condition.minTotalPurchaseAmount}+ total purchases` };
+    }
+  }
+
+  // 생일 월 조건
+  if (condition.birthdayMonth) {
+    const currentMonth = now.getMonth() + 1; // JavaScript months are 0-indexed
+    if (user.birthMonth !== currentMonth) {
+      return { eligible: false, reason: 'Birthday month only' };
+    }
+  }
+
+  return { eligible: true };
+}
+
+// Frontend - 다운로드 가능한 쿠폰 목록 (자격 조건 필터링)
+app.get('/datepalm-bay/api/mvp/coupons/downloadable', (req, res) => {
+  console.log('\n=== [Frontend] Downloadable Coupons ===');
+
+  // Authorization 헤더에서 userId 추출 (간단한 Mock 인증)
+  const authHeader = req.headers.authorization;
+  let userId = null;
+
+  if (authHeader && authHeader.startsWith('Bearer ')) {
+    const token = authHeader.substring(7);
+    userId = extractUserIdFromToken(token);
+    console.log(`Token: ${token} -> Extracted userId: ${userId}`);
+  }
+
+  if (!userId) {
+    console.log('No userId found - returning 401');
+    return res.status(401).json({
+      ok: false,
+      data: null,
+      message: 'Authentication required'
+    });
+  }
+
+  const user = users.find(u => u.code === userId || u.id === userId);
+  if (!user) {
+    console.log(`User not found for userId: ${userId}`);
+    return res.status(404).json({
+      ok: false,
+      data: null,
+      message: 'User not found'
+    });
+  }
+
+  console.log(`User found: ${user.name} (${user.memberLevel}, id: ${user.id}, code: ${user.code})`);
+
+  const now = new Date();
+
+  // 다운로드 가능한 쿠폰 필터링
+  const downloadableCoupons = coupons.filter(coupon => {
+    // 기본 조건: ACTIVE + 유효기간 내 + isDownloadable
+    const startDate = new Date(coupon.startDate);
+    const endDate = new Date(coupon.endDate);
+    if (coupon.status !== 'ACTIVE' || now < startDate || now > endDate) {
+      return false;
+    }
+    if (!coupon.isDownloadable) {
+      return false;
+    }
+
+    // 이미 다운로드한 쿠폰 제외
+    const alreadyDownloaded = userCoupons.some(
+      uc => uc.userId === user.code && uc.couponCode === coupon.code
+    );
+    if (alreadyDownloaded) {
+      return false;
+    }
+
+    // 자격 조건 확인
+    const eligibility = checkCouponEligibility(user, coupon);
+    return eligibility.eligible;
+  });
+
+  console.log(`Found ${downloadableCoupons.length} downloadable coupons for user`);
+
+  res.json({
+    ok: true,
+    data: downloadableCoupons.map(c => ({
+      code: c.code,
+      name: c.name,
+      description: c.description,
+      couponType: c.couponType,
+      discountType: c.discountType,
+      discountValue: c.discountValue,
+      minOrderAmount: c.minOrderAmount,
+      maxDiscountAmount: c.maxDiscountAmount,
+      startDate: c.startDate,
+      endDate: c.endDate,
+      applicableCategories: c.applicableCategories,
+      stackable: c.stackable
+    })),
+    message: 'Downloadable coupons retrieved successfully'
+  });
+});
+
+// Frontend - 쿠폰 다운로드
+app.post('/datepalm-bay/api/mvp/coupons/download/:code', (req, res) => {
+  console.log('\n=== [Frontend] Download Coupon ===');
+
+  const { code } = req.params;
+  const authHeader = req.headers.authorization;
+  let userId = null;
+
+  if (authHeader && authHeader.startsWith('Bearer ')) {
+    const token = authHeader.substring(7);
+    userId = extractUserIdFromToken(token);
+  }
+
+  if (!userId) {
+    return res.status(401).json({
+      ok: false,
+      data: null,
+      message: 'Authentication required'
+    });
+  }
+
+  const user = users.find(u => u.code === userId || u.id === userId);
+  if (!user) {
+    return res.status(404).json({
+      ok: false,
+      data: null,
+      message: 'User not found'
+    });
+  }
+
+  const coupon = coupons.find(c => c.code === code);
+  if (!coupon) {
+    return res.status(404).json({
+      ok: false,
+      data: null,
+      message: 'Coupon not found'
+    });
+  }
+
+  // 이미 다운로드 여부 확인
+  const alreadyDownloaded = userCoupons.some(
+    uc => uc.userId === user.code && uc.couponCode === coupon.code
+  );
+  if (alreadyDownloaded) {
+    return res.status(400).json({
+      ok: false,
+      data: null,
+      message: 'Coupon already downloaded'
+    });
+  }
+
+  // 자격 조건 확인
+  const eligibility = checkCouponEligibility(user, coupon);
+  if (!eligibility.eligible) {
+    return res.status(403).json({
+      ok: false,
+      data: null,
+      message: `Not eligible: ${eligibility.reason}`
+    });
+  }
+
+  // 쿠폰 다운로드 저장
+  const newUserCoupon = {
+    id: `UC-${Date.now()}`,
+    userId: user.code,
+    couponCode: coupon.code,
+    downloadedAt: new Date().toISOString(),
+    usedAt: null,
+    usedOrderCode: null
+  };
+  userCoupons.push(newUserCoupon);
+
+  console.log(`Coupon ${code} downloaded by user ${user.name}`);
+
+  res.json({
+    ok: true,
+    data: {
+      code: coupon.code,
+      name: coupon.name,
+      description: coupon.description,
+      couponType: coupon.couponType,
+      discountType: coupon.discountType,
+      discountValue: coupon.discountValue,
+      minOrderAmount: coupon.minOrderAmount,
+      maxDiscountAmount: coupon.maxDiscountAmount,
+      endDate: coupon.endDate,
+      downloadedAt: newUserCoupon.downloadedAt
+    },
+    message: 'Coupon downloaded successfully'
+  });
+});
+
+// Frontend - 내 쿠폰 목록
+app.get('/datepalm-bay/api/mvp/coupons/my', (req, res) => {
+  console.log('\n=== [Frontend] My Coupons ===');
+
+  const authHeader = req.headers.authorization;
+  let userId = null;
+
+  if (authHeader && authHeader.startsWith('Bearer ')) {
+    const token = authHeader.substring(7);
+    userId = extractUserIdFromToken(token);
+    console.log(`Token: ${token} -> Extracted userId: ${userId}`);
+  }
+
+  if (!userId) {
+    console.log('No userId found - returning 401');
+    return res.status(401).json({
+      ok: false,
+      data: null,
+      message: 'Authentication required'
+    });
+  }
+
+  const user = users.find(u => u.code === userId || u.id === userId);
+  if (!user) {
+    console.log(`User not found for userId: ${userId}`);
+    return res.status(404).json({
+      ok: false,
+      data: null,
+      message: 'User not found'
+    });
+  }
+
+  console.log(`User found: ${user.name} (id: ${user.id}, code: ${user.code})`);
+
+  // 유저의 쿠폰 목록
+  const myUserCoupons = userCoupons.filter(uc => uc.userId === user.code);
+  console.log(`Found ${myUserCoupons.length} coupons for user (searching by code: ${user.code})`);
+
+  const now = new Date();
+  const myCoupons = myUserCoupons.map(uc => {
+    const coupon = coupons.find(c => c.code === uc.couponCode);
+    if (!coupon) return null;
+
+    // 상태 결정
+    let status = 'USABLE';
+    if (uc.usedAt) {
+      status = 'USED';
+    } else if (new Date(coupon.endDate) < now) {
+      status = 'EXPIRED';
+    }
+
+    return {
+      code: coupon.code,
+      name: coupon.name,
+      description: coupon.description,
+      couponType: coupon.couponType,
+      discountType: coupon.discountType,
+      discountValue: coupon.discountValue,
+      minOrderAmount: coupon.minOrderAmount,
+      maxDiscountAmount: coupon.maxDiscountAmount,
+      startDate: coupon.startDate,
+      endDate: coupon.endDate,
+      applicableCategories: coupon.applicableCategories,
+      stackable: coupon.stackable,
+      downloadedAt: uc.downloadedAt,
+      usedAt: uc.usedAt,
+      usedOrderCode: uc.usedOrderCode,
+      status
+    };
+  }).filter(Boolean);
+
+  // 상태별 분류
+  const usableCoupons = myCoupons.filter(c => c.status === 'USABLE');
+  const usedCoupons = myCoupons.filter(c => c.status === 'USED');
+  const expiredCoupons = myCoupons.filter(c => c.status === 'EXPIRED');
+
+  console.log(`User ${user.name}: ${usableCoupons.length} usable, ${usedCoupons.length} used, ${expiredCoupons.length} expired`);
+
+  res.json({
+    ok: true,
+    data: {
+      all: myCoupons,
+      usable: usableCoupons,
+      used: usedCoupons,
+      expired: expiredCoupons,
+      summary: {
+        total: myCoupons.length,
+        usable: usableCoupons.length,
+        used: usedCoupons.length,
+        expired: expiredCoupons.length
+      }
+    },
+    message: 'My coupons retrieved successfully'
+  });
+});
+
+// Frontend - 쿠폰 사용
+app.post('/datepalm-bay/api/mvp/coupons/use/:code', (req, res) => {
+  console.log('\n=== [Frontend] Use Coupon ===');
+
+  const { code } = req.params;
+  const { orderCode, orderAmount } = req.body;
+
+  const authHeader = req.headers.authorization;
+  let userId = null;
+
+  if (authHeader && authHeader.startsWith('Bearer ')) {
+    const token = authHeader.substring(7);
+    userId = extractUserIdFromToken(token);
+  }
+
+  if (!userId) {
+    return res.status(401).json({
+      ok: false,
+      data: null,
+      message: 'Authentication required'
+    });
+  }
+
+  const user = users.find(u => u.code === userId || u.id === userId);
+  if (!user) {
+    return res.status(404).json({
+      ok: false,
+      data: null,
+      message: 'User not found'
+    });
+  }
+
+  // 유저 쿠폰 찾기
+  const userCouponIndex = userCoupons.findIndex(
+    uc => uc.userId === user.code && uc.couponCode === code
+  );
+
+  if (userCouponIndex === -1) {
+    return res.status(404).json({
+      ok: false,
+      data: null,
+      message: 'Coupon not found in your coupon box'
+    });
+  }
+
+  const userCoupon = userCoupons[userCouponIndex];
+
+  // 이미 사용한 쿠폰 확인
+  if (userCoupon.usedAt) {
+    return res.status(400).json({
+      ok: false,
+      data: null,
+      message: 'Coupon already used'
+    });
+  }
+
+  const coupon = coupons.find(c => c.code === code);
+  if (!coupon) {
+    return res.status(404).json({
+      ok: false,
+      data: null,
+      message: 'Coupon not found'
+    });
+  }
+
+  // 만료 확인
+  const now = new Date();
+  if (new Date(coupon.endDate) < now) {
+    return res.status(400).json({
+      ok: false,
+      data: null,
+      message: 'Coupon has expired'
+    });
+  }
+
+  // 최소 주문금액 확인
+  if (orderAmount && orderAmount < coupon.minOrderAmount) {
+    return res.status(400).json({
+      ok: false,
+      data: null,
+      message: `Minimum order amount is $${coupon.minOrderAmount}`
+    });
+  }
+
+  // 쿠폰 사용 처리
+  userCoupons[userCouponIndex] = {
+    ...userCoupon,
+    usedAt: new Date().toISOString(),
+    usedOrderCode: orderCode || null
+  };
+
+  // 쿠폰 사용 카운트 증가
+  const couponIndex = coupons.findIndex(c => c.code === code);
+  if (couponIndex !== -1) {
+    coupons[couponIndex].usageCount = (coupons[couponIndex].usageCount || 0) + 1;
+  }
+
+  // 할인 금액 계산
+  let discountAmount = 0;
+  if (orderAmount) {
+    if (coupon.discountType === 'PERCENT') {
+      discountAmount = Math.floor(orderAmount * coupon.discountValue / 100);
+      if (coupon.maxDiscountAmount) {
+        discountAmount = Math.min(discountAmount, coupon.maxDiscountAmount);
+      }
+    } else {
+      discountAmount = coupon.discountValue;
+    }
+  }
+
+  console.log(`Coupon ${code} used by user ${user.name}, discount: $${discountAmount}`);
+
+  res.json({
+    ok: true,
+    data: {
+      couponCode: code,
+      discountAmount,
+      usedAt: userCoupons[userCouponIndex].usedAt
+    },
+    message: 'Coupon used successfully'
+  });
+});
+
 // 전역 에러 핸들러 (모든 라우트 이후에 배치)
 app.use(handleMulterError);
 
@@ -3163,6 +4235,20 @@ Available Endpoints:
   POST   /datepalm-bay/api/admin/event/create
   PUT    /datepalm-bay/api/admin/event/edit
   DELETE /datepalm-bay/api/admin/event/delete/:code
+
+🎟️ Admin - Coupons:
+  GET    /datepalm-bay/api/admin/coupon/list
+  GET    /datepalm-bay/api/admin/coupon/detail/:code
+  POST   /datepalm-bay/api/admin/coupon/create
+  PUT    /datepalm-bay/api/admin/coupon/edit
+  DELETE /datepalm-bay/api/admin/coupon/delete/:code
+
+💳 Frontend - Coupon Center:
+  GET    /datepalm-bay/api/mvp/coupons/available
+  GET    /datepalm-bay/api/mvp/coupons/downloadable
+  POST   /datepalm-bay/api/mvp/coupons/download/:code
+  GET    /datepalm-bay/api/mvp/coupons/my
+  POST   /datepalm-bay/api/mvp/coupons/use/:code
 
 🔐 Frontend - Auth:
   POST   /datepalm-bay/mvp/login
