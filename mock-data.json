@@ -35,10 +35,11 @@
       },
       "groupBuyTiers": [],
       "createdAt": "2026-02-02T07:20:21.467Z",
-      "updatedAt": "2026-02-06T15:01:56.927Z",
+      "updatedAt": "2026-02-09T10:24:29.845Z",
       "shippingCostType": "CONDITIONAL",
       "shippingCost": 20,
-      "freeShippingThreshold": 100
+      "freeShippingThreshold": 100,
+      "brand": "Medicube"
     },
     {
       "productCode": "PROD-1770112851577",
@@ -54,7 +55,10 @@
       "policy": {
         "deliveryPolicy": ".",
         "refundPolicy": ".",
-        "exchangePolicy": "."
+        "exchangePolicy": ".",
+        "shippingCost": 0,
+        "shippingCostType": "FREE",
+        "freeShippingThreshold": 0
       },
       "detailInfo": "PHA+I01lZWJhaywmbmJzcDsjPHNwYW4gc3R5bGU9ImNvbG9yOiByZ2IoMjIsIDI0LCAyOSk7Ij5DYW1lbGxpYSZuYnNwO0NsZWFyJm5ic3A7U2VydW08L3NwYW4+PC9wPg==",
       "files": {
@@ -72,7 +76,11 @@
       },
       "groupBuyTiers": [],
       "createdAt": "2026-02-03T10:00:51.577Z",
-      "updatedAt": "2026-02-03T10:06:56.213Z"
+      "updatedAt": "2026-02-09T10:23:32.387Z",
+      "shippingCostType": "FREE",
+      "shippingCost": 0,
+      "freeShippingThreshold": 0,
+      "brand": "Meebak"
     }
   ],
   "snsReviews": [
@@ -3905,5 +3913,9 @@
       "createdAt": "2026-02-03T10:01:06.906Z"
     }
   ],
-  "savedAt": "2026-02-06T15:01:56.927Z"
+  "brands": [
+    "Meebak",
+    "Medicube"
+  ],
+  "savedAt": "2026-02-09T10:24:29.845Z"
 }

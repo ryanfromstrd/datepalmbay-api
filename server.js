@@ -12,6 +12,8 @@ const snsCollector = require('./services/snsReviewCollector');
 const reviewSummarizer = require('./services/reviewSummarizer');
 // PayPal 결제 서비스
 const paypalService = require('./services/paypal');
+// FedEx 물류 서비스
+const fedexService = require('./services/fedex');
 
 // ========================================
 // 파일 기반 영속성 (서버 재시작 시 데이터 유지)
@@ -24,18 +26,19 @@ function loadData() {
     try {
       const fileContent = fs.readFileSync(DATA_FILE, 'utf-8');
       const data = JSON.parse(fileContent);
-      console.log(`📁 데이터 로드 완료: ${data.products?.length || 0}개 상품, ${data.snsReviews?.length || 0}개 SNS 리뷰`);
+      console.log(`📁 데이터 로드 완료: ${data.products?.length || 0}개 상품, ${data.snsReviews?.length || 0}개 SNS 리뷰, ${data.brands?.length || 0}개 브랜드`);
       return {
         products: data.products || [],
-        snsReviews: data.snsReviews || []
+        snsReviews: data.snsReviews || [],
+        brands: data.brands || []
       };
     } catch (e) {
       console.error('❌ 데이터 로드 실패:', e.message);
-      return { products: [], snsReviews: [] };
+      return { products: [], snsReviews: [], brands: [] };
     }
   }
   console.log('📁 저장된 데이터 없음, 빈 저장소로 시작');
-  return { products: [], snsReviews: [] };
+  return { products: [], snsReviews: [], brands: [] };
 }
 
 // 데이터 저장 함수
@@ -44,10 +47,11 @@ function saveData() {
     const dataToSave = {
       products: products,
       snsReviews: snsReviews,
+      brands: brands,
       savedAt: new Date().toISOString()
     };
     fs.writeFileSync(DATA_FILE, JSON.stringify(dataToSave, null, 2), 'utf-8');
-    console.log(`💾 데이터 저장 완료: ${products.length}개 상품, ${snsReviews.length}개 SNS 리뷰`);
+    console.log(`💾 데이터 저장 완료: ${products.length}개 상품, ${snsReviews.length}개 SNS 리뷰, ${brands.length}개 브랜드`);
   } catch (e) {
     console.error('❌ 데이터 저장 실패:', e.message);
   }
@@ -200,6 +204,9 @@ const loadedData = loadData();
 
 // Mock 상품 데이터 저장소 (파일에서 로드)
 const products = loadedData.products;
+
+// Mock 브랜드 데이터 저장소 (파일에서 로드)
+const brands = loadedData.brands;
 
 // Mock 문의 데이터 저장소
 const contacts = [
@@ -553,6 +560,8 @@ app.post('/datepalm-bay/api/admin/product/create', upload.fields([
       shippingCostType: requestData.shippingCostType || 'FREE',
       shippingCost: requestData.shippingCost || 0,
       freeShippingThreshold: requestData.freeShippingThreshold || 0,
+      // 브랜드
+      brand: requestData.brand || '',
       createdAt: new Date().toISOString()
     };
 
@@ -714,6 +723,8 @@ app.put('/datepalm-bay/api/admin/product/edit', upload.fields([
       shippingCostType: requestData.shippingCostType || 'FREE',
       shippingCost: requestData.shippingCost || 0,
       freeShippingThreshold: requestData.freeShippingThreshold || 0,
+      // 브랜드
+      brand: requestData.brand !== undefined ? requestData.brand : (products[productIndex].brand || ''),
       updatedAt: new Date().toISOString()
     };
     saveData(); // 파일에 저장
@@ -779,6 +790,72 @@ app.delete('/datepalm-bay/api/admin/product/delete', (req, res) => {
       message: '상품 삭제에 실패했습니다.'
     });
   }
+});
+
+// 어드민 - 브랜드 목록 조회 (저장된 브랜드 + 상품에서 추출한 브랜드 병합)
+app.get('/datepalm-bay/api/admin/product/brands', (req, res) => {
+  console.log('\n=== [어드민] 브랜드 목록 조회 ===');
+
+  const brandSet = new Set();
+  // 독립 저장된 브랜드
+  brands.forEach(b => brandSet.add(b));
+  // 상품에서 추출한 브랜드
+  products.forEach(p => {
+    if (p.brand && p.brand.trim() !== '') {
+      brandSet.add(p.brand.trim());
+    }
+  });
+
+  const allBrands = Array.from(brandSet).sort((a, b) => a.localeCompare(b));
+  console.log(`총 ${allBrands.length}개 브랜드 조회 (저장 ${brands.length} + 상품 추출)`);
+
+  res.json({
+    ok: true,
+    data: allBrands,
+    message: '브랜드 목록 조회 성공'
+  });
+});
+
+// 어드민 - 브랜드 생성 (독립 저장)
+app.post('/datepalm-bay/api/admin/product/brands', (req, res) => {
+  console.log('\n=== [어드민] 브랜드 생성 ===');
+  const { name } = req.body;
+
+  if (!name || !name.trim()) {
+    return res.status(400).json({
+      ok: false,
+      message: '브랜드명을 입력해주세요.'
+    });
+  }
+
+  const trimmedName = name.trim();
+
+  // 중복 체크 (저장된 브랜드 + 상품 브랜드)
+  const existingBrands = new Set([...brands]);
+  products.forEach(p => {
+    if (p.brand && p.brand.trim() !== '') {
+      existingBrands.add(p.brand.trim());
+    }
+  });
+
+  if (existingBrands.has(trimmedName)) {
+    console.log(`브랜드 "${trimmedName}" 이미 존재`);
+    return res.json({
+      ok: true,
+      data: trimmedName,
+      message: '이미 존재하는 브랜드입니다.'
+    });
+  }
+
+  brands.push(trimmedName);
+  saveData();
+  console.log(`브랜드 "${trimmedName}" 생성 완료`);
+
+  res.json({
+    ok: true,
+    data: trimmedName,
+    message: '브랜드 생성 성공'
+  });
 });
 
 // 상품 목록 조회 API (페이징)
@@ -891,7 +968,8 @@ app.get('/datepalm-bay/api/admin/product/detail/:code', (req, res) => {
     // 배송비 관련 필드
     shippingCostType: product.shippingCostType || 'FREE',
     shippingCost: product.shippingCost || 0,
-    freeShippingThreshold: product.freeShippingThreshold || 0
+    freeShippingThreshold: product.freeShippingThreshold || 0,
+    brand: product.brand || ''
   };
 
   console.log('조회 성공:', product.productName);
@@ -1173,7 +1251,8 @@ app.get('/datepalm-bay/api/mvp/product/normal/list', (req, res) => {
     discountType: p.discountType,
     summary: p.introduction,
     price: p.productPrice,
-    thumbnailUrl: p.files?.mainImages?.[0]?.url || ''  // 첫 번째 main image 사용
+    thumbnailUrl: p.files?.mainImages?.[0]?.url || '',  // 첫 번째 main image 사용
+    brand: p.brand || ''
   }));
 
   console.log(`페이지: ${pageNo}, 크기: ${pageSize}`);
@@ -1263,7 +1342,8 @@ app.get('/datepalm-bay/api/mvp/product/normal/detail/:code', (req, res) => {
     // 배송비 관련 필드 (상위 레벨 또는 policy 객체에서 가져옴)
     shippingCostType: product.shippingCostType || product.policy?.shippingCostType || 'FREE',
     shippingCost: product.shippingCost ?? product.policy?.shippingCost ?? 0,
-    freeShippingThreshold: product.freeShippingThreshold ?? product.policy?.freeShippingThreshold ?? 0
+    freeShippingThreshold: product.freeShippingThreshold ?? product.policy?.freeShippingThreshold ?? 0,
+    brand: product.brand || ''
   };
 
   console.log('조회 성공:', product.productName);
@@ -1272,6 +1352,101 @@ app.get('/datepalm-bay/api/mvp/product/normal/detail/:code', (req, res) => {
     ok: true,
     data: detailResponse,
     message: '상품 상세 조회 성공'
+  });
+});
+
+// ======================================
+// Brand Endpoints
+// ======================================
+
+// 프론트 - 브랜드 목록 조회
+app.get('/datepalm-bay/api/mvp/product/brands', (req, res) => {
+  console.log('\n=== [프론트] 브랜드 목록 조회 ===');
+
+  const brandSet = new Set();
+  products.forEach(p => {
+    if (p.productSaleStatus === true && p.brand && p.brand.trim() !== '') {
+      brandSet.add(p.brand.trim());
+    }
+  });
+
+  const brands = Array.from(brandSet).sort((a, b) => a.localeCompare(b));
+  console.log(`총 ${brands.length}개 브랜드 조회`);
+
+  res.json({
+    ok: true,
+    data: brands,
+    message: '브랜드 목록 조회 성공'
+  });
+});
+
+// 프론트 - 브랜드별 상품 목록 조회
+app.get('/datepalm-bay/api/mvp/product/brand/list', (req, res) => {
+  console.log('\n=== [프론트] 브랜드별 상품 목록 조회 ===');
+  const pageNo = parseInt(req.query.pageNo) || 0;
+  const pageSize = parseInt(req.query.pageSize) || 10;
+  const { sortType, brand } = req.query;
+
+  console.log('필터 조건:', { pageNo, pageSize, sortType, brand });
+
+  // 판매중인 상품만 필터링
+  let filteredProducts = products.filter(p => p.productSaleStatus === true);
+
+  // 브랜드 필터링
+  if (brand) {
+    filteredProducts = filteredProducts.filter(p => p.brand && p.brand.trim() === brand.trim());
+  } else {
+    // brand 미지정 시 brand가 있는 상품만 반환
+    filteredProducts = filteredProducts.filter(p => p.brand && p.brand.trim() !== '');
+  }
+
+  // 정렬
+  if (sortType === 'NEWEST') {
+    filteredProducts.sort((a, b) => new Date(b.createdAt) - new Date(a.createdAt));
+  } else if (sortType === 'OLDEST') {
+    filteredProducts.sort((a, b) => new Date(a.createdAt) - new Date(b.createdAt));
+  } else if (sortType === 'PRICE_HIGH') {
+    filteredProducts.sort((a, b) => b.productPrice - a.productPrice);
+  } else if (sortType === 'PRICE_LOW') {
+    filteredProducts.sort((a, b) => a.productPrice - b.productPrice);
+  }
+
+  const start = pageNo * pageSize;
+  const end = start + pageSize;
+  const paginatedProducts = filteredProducts.slice(start, end);
+
+  const formattedProducts = paginatedProducts.map(p => ({
+    code: p.productCode,
+    name: p.productName,
+    productNote: '',
+    regularPrice: p.productRegularPrice,
+    discountPrice: p.productDiscountPrice,
+    discountType: p.discountType,
+    summary: p.introduction,
+    price: p.productPrice,
+    thumbnailUrl: p.files?.mainImages?.[0]?.url || '',
+    brand: p.brand || ''
+  }));
+
+  console.log(`총 ${filteredProducts.length}개 상품 중 ${formattedProducts.length}개 반환`);
+
+  res.json({
+    ok: true,
+    data: {
+      content: formattedProducts,
+      pageable: {
+        pageNumber: pageNo,
+        pageSize: pageSize
+      },
+      totalElements: filteredProducts.length,
+      totalPages: Math.ceil(filteredProducts.length / pageSize),
+      size: pageSize,
+      number: pageNo,
+      first: pageNo === 0,
+      last: pageNo >= Math.floor(filteredProducts.length / pageSize),
+      numberOfElements: formattedProducts.length
+    },
+    message: '브랜드별 상품 목록 조회 성공'
   });
 });
 
@@ -1705,8 +1880,8 @@ app.post('/datepalm-bay/mvp/login', (req, res) => {
     });
   }
 
-  // Find user
-  const user = users.find(u => u.id === id && u.password === password);
+  // Find user by id or email
+  const user = users.find(u => (u.id === id || u.email === id) && u.password === password);
 
   if (!user) {
     console.log(`Login failed: Invalid credentials for ID ${id}`);
@@ -1789,6 +1964,81 @@ app.get('/datepalm-bay/api/mvp/member/detail/me', (req, res) => {
     },
     message: 'User profile retrieved successfully'
   });
+});
+
+// ======================================
+// Google Mock Login
+// ======================================
+app.post('/datepalm-bay/mvp/google-login', (req, res) => {
+  console.log('\n=== [Auth] Google Mock Login ===');
+
+  // Return first test user as the Google-authenticated user
+  const user = users[0];
+  const accessToken = `mock-google-token-${user.id}-${Date.now()}`;
+
+  console.log(`Google login successful (mock): ${user.name} (${user.email})`);
+
+  // Return data directly (same format as regular login)
+  res.json({
+    accessToken,
+    id: user.id,
+    code: user.code,
+    name: user.name,
+    email: user.email,
+    phone: user.phone,
+    birthDate: user.birthDate || '1990-01-01',
+    country: user.country || 'UNITED_ARAB_EMIRATES',
+    status: user.status,
+  });
+});
+
+// ======================================
+// SMS Mock Verification
+// ======================================
+const smsVerifications = {};
+
+app.post('/datepalm-bay/api/mvp/member/sms/send', (req, res) => {
+  console.log('\n=== [SMS] Send Verification Code ===');
+  const { phone, countryCode } = req.body;
+
+  if (!phone) {
+    return res.json({ ok: false, data: null, message: 'Phone number is required' });
+  }
+
+  const code = String(Math.floor(100000 + Math.random() * 900000));
+  const requestId = `sms-${Date.now()}`;
+
+  smsVerifications[requestId] = { code, phone: `${countryCode || ''}${phone}`, createdAt: Date.now() };
+
+  console.log(`📱 SMS Code for ${countryCode} ${phone}: ${code}`);
+  console.log(`   Request ID: ${requestId}`);
+
+  res.json({ ok: true, data: requestId, message: 'SMS verification code sent' });
+});
+
+app.post('/datepalm-bay/api/mvp/member/sms/verify', (req, res) => {
+  console.log('\n=== [SMS] Verify Code ===');
+  const { requestId, code } = req.body;
+
+  const verification = smsVerifications[requestId];
+
+  if (!verification) {
+    return res.json({ ok: false, data: null, message: 'Invalid request' });
+  }
+
+  if (Date.now() - verification.createdAt > 5 * 60 * 1000) {
+    delete smsVerifications[requestId];
+    return res.json({ ok: false, data: null, message: 'Code expired' });
+  }
+
+  if (verification.code !== code) {
+    console.log(`❌ SMS code mismatch: expected ${verification.code}, got ${code}`);
+    return res.json({ ok: false, data: null, message: 'Code does not match' });
+  }
+
+  delete smsVerifications[requestId];
+  console.log('✅ SMS verification successful');
+  res.json({ ok: true, data: 'verified', message: 'Phone verified successfully' });
 });
 
 // ======================================
@@ -3128,8 +3378,129 @@ function extractInstagramPostId(url) {
 // 결제 API (Toss Payments)
 // ========================================
 
-// 주문 목록 저장소 (메모리)
-let customerOrders = [];
+// 주문 목록 저장소 (메모리) - 시드 데이터 포함
+let customerOrders = [
+  {
+    orderId: 'ORDER-TEST-FEDEX-001',
+    productCode: products[0]?.productCode || 'PROD-TEST',
+    productName: products[0]?.productNameEn || 'Premium Medjool Dates - Gift Box',
+    quantity: 2,
+    amount: 89.99,
+    currency: 'USD',
+    orderType: 'NORMAL',
+    teamId: null,
+    ordererName: 'John Smith',
+    ordererContact: '+1-555-0123',
+    ordererEmail: 'john@example.com',
+    recipientName: 'Jane Doe',
+    recipientContact: '+1-555-0456',
+    postalCode: '90210',
+    address: '123 Palm Avenue',
+    detailAddress: 'Suite 100',
+    deliveryMemo: 'Leave at front door',
+    isBundleOrder: false,
+    bundleItems: null,
+    couponCode: null,
+    couponDiscount: 0,
+    shippingCost: 15.00,
+    status: 'DELIVERY',
+    paypalOrderId: 'PAYPAL-TEST-001',
+    captureId: 'CAPTURE-TEST-001',
+    paymentMethod: 'PAYPAL',
+    approvedAt: new Date('2026-02-01T14:30:00Z').toISOString(),
+    courier: 'FEDEX',
+    fedexTrackingNumber: '794644790138',
+    fedexServiceType: 'FEDEX_INTERNATIONAL_PRIORITY',
+    fedexEstimatedDelivery: new Date('2026-02-15T18:00:00Z').toISOString(),
+    fedexShippedAt: new Date('2026-02-02T09:00:00Z').toISOString(),
+    fedexLabelBase64: null,
+    fedexPickupConfirmation: null,
+    fedexPickupDate: null,
+    fedexPickupTime: null,
+    fedexTradeDocuments: [],
+    createdAt: new Date('2026-02-01T14:00:00Z').toISOString(),
+  },
+  {
+    orderId: 'ORDER-TEST-002',
+    productCode: products[0]?.productCode || 'PROD-TEST',
+    productName: products[0]?.productNameEn || 'Ajwa Dates - Premium Pack',
+    quantity: 1,
+    amount: 45.00,
+    currency: 'USD',
+    orderType: 'NORMAL',
+    teamId: null,
+    ordererName: 'John Smith',
+    ordererContact: '+1-555-0123',
+    ordererEmail: 'john@example.com',
+    recipientName: 'John Smith',
+    recipientContact: '+1-555-0123',
+    postalCode: '10001',
+    address: '456 Date Street',
+    detailAddress: 'Apt 7B',
+    deliveryMemo: '',
+    isBundleOrder: false,
+    bundleItems: null,
+    couponCode: null,
+    couponDiscount: 0,
+    shippingCost: 10.00,
+    status: 'SUCCESS',
+    paypalOrderId: 'PAYPAL-TEST-002',
+    captureId: 'CAPTURE-TEST-002',
+    paymentMethod: 'PAYPAL',
+    approvedAt: new Date('2026-02-05T10:00:00Z').toISOString(),
+    courier: null,
+    fedexTrackingNumber: null,
+    fedexServiceType: null,
+    fedexEstimatedDelivery: null,
+    fedexShippedAt: null,
+    fedexLabelBase64: null,
+    fedexPickupConfirmation: null,
+    fedexPickupDate: null,
+    fedexPickupTime: null,
+    fedexTradeDocuments: [],
+    createdAt: new Date('2026-02-05T09:30:00Z').toISOString(),
+  },
+  {
+    orderId: 'ORDER-TEST-FEDEX-003',
+    productCode: products[1]?.productCode || products[0]?.productCode || 'PROD-TEST',
+    productName: products[1]?.productNameEn || 'Ajwa Dates - Premium Pack',
+    quantity: 3,
+    amount: 129.99,
+    currency: 'USD',
+    orderType: 'NORMAL',
+    teamId: null,
+    ordererName: 'John Smith',
+    ordererContact: '+1-555-0123',
+    ordererEmail: 'john@example.com',
+    recipientName: 'Michael Brown',
+    recipientContact: '+1-555-0789',
+    postalCode: '30301',
+    address: '789 Peachtree Road NE',
+    detailAddress: 'Unit 12',
+    deliveryMemo: 'Ring doorbell',
+    isBundleOrder: false,
+    bundleItems: null,
+    couponCode: null,
+    couponDiscount: 0,
+    shippingCost: 12.00,
+    status: 'DELIVERED',
+    paypalOrderId: 'PAYPAL-TEST-003',
+    captureId: 'CAPTURE-TEST-003',
+    paymentMethod: 'PAYPAL',
+    approvedAt: new Date('2026-01-20T11:00:00Z').toISOString(),
+    courier: 'FEDEX',
+    fedexTrackingNumber: '794644790138',
+    fedexServiceType: 'FEDEX_INTERNATIONAL_ECONOMY',
+    fedexEstimatedDelivery: new Date('2026-01-28T18:00:00Z').toISOString(),
+    fedexShippedAt: new Date('2026-01-21T08:00:00Z').toISOString(),
+    fedexLabelBase64: null,
+    fedexPickupConfirmation: null,
+    fedexPickupDate: null,
+    fedexPickupTime: null,
+    fedexTradeDocuments: [],
+    createdAt: new Date('2026-01-20T10:30:00Z').toISOString(),
+  }
+];
 
 // 주문 생성 API (주문 정보만 저장, PayPal 결제는 별도)
 app.post('/datepalm-bay/api/mvp/order/create', async (req, res) => {
@@ -3251,6 +3622,17 @@ app.post('/datepalm-bay/api/mvp/order/create', async (req, res) => {
     captureId: null,
     paymentMethod: null,
     approvedAt: null,
+    // FedEx 물류 필드
+    fedexTrackingNumber: null,
+    fedexLabelBase64: null,
+    fedexServiceType: null,
+    fedexEstimatedDelivery: null,
+    fedexShippedAt: null,
+    fedexPickupConfirmation: null,
+    fedexPickupDate: null,
+    fedexPickupTime: null,
+    fedexTradeDocuments: [],
+    courier: null,
     createdAt: new Date().toISOString()
   };
 
@@ -3481,6 +3863,121 @@ app.get('/datepalm-bay/api/mvp/orders', (req, res) => {
     ok: true,
     data: paidOrders,
     message: 'Orders retrieved successfully'
+  });
+});
+
+// ======================================
+// Frontend - Customer Order History
+// ======================================
+
+function mapOrderStatus(serverStatus, order) {
+  if (order.courier === 'FEDEX' && order.fedexTrackingNumber && serverStatus === 'SUCCESS') return 'DELIVERY';
+  if (serverStatus === 'DELIVERY') return 'DELIVERY';
+  if (serverStatus === 'DELIVERED') return 'DELIVERED';
+  if (serverStatus === 'SUCCESS') return 'SUCCESS';
+  if (serverStatus === 'REFUNDED') return 'CANCEL';
+  return 'PROCESSING';
+}
+
+function mapPaymentStatus(serverStatus) {
+  if (['SUCCESS', 'DELIVERY', 'DELIVERED'].includes(serverStatus)) return 'SUCCESS';
+  if (serverStatus === 'REFUNDED') return 'REFUND';
+  return 'PROCESS';
+}
+
+// Customer - Order History List
+app.get('/datepalm-bay/api/mvp/order/history', (req, res) => {
+  console.log('\n=== [Customer] 주문 내역 조회 ===');
+
+  const visibleStatuses = ['SUCCESS', 'DELIVERY', 'DELIVERED', 'REFUNDED'];
+  const visibleOrders = customerOrders.filter(o => visibleStatuses.includes(o.status));
+
+  const content = visibleOrders.map(o => {
+    const product = products.find(p => p.productCode === o.productCode);
+    const thumbnail = product?.files?.mainImages?.[0]?.url || '';
+    return {
+      thumbnail,
+      orderCode: o.orderId,
+      productName: o.productName,
+      orderStatus: mapOrderStatus(o.status, o),
+      orderAt: o.approvedAt || o.createdAt,
+      paymentAmount: o.amount || 0,
+    };
+  }).sort((a, b) => new Date(b.orderAt) - new Date(a.orderAt));
+
+  console.log(`총 ${content.length}개 주문 반환`);
+
+  res.json({ ok: true, data: content, message: 'Order history retrieved' });
+});
+
+// Customer - Order Detail
+app.get('/datepalm-bay/api/mvp/order/detail/:code', (req, res) => {
+  console.log(`\n=== [Customer] 주문 상세 조회: ${req.params.code} ===`);
+
+  const order = customerOrders.find(o => o.orderId === req.params.code);
+  if (!order) {
+    return res.status(404).json({ ok: false, data: null, message: 'Order not found' });
+  }
+
+  const product = products.find(p => p.productCode === order.productCode);
+  const imageUrl = product?.files?.mainImages?.[0]?.url || '';
+  const orderStatus = mapOrderStatus(order.status, order);
+
+  res.json({
+    ok: true,
+    data: {
+      orderInfo: {
+        orderStatus,
+        imageUrl,
+        orderCode: order.orderId,
+        productCode: order.productCode,
+        productName: order.productName,
+        quantity: order.quantity,
+        orderAmount: order.amount,
+        ordererName: order.ordererName,
+        ordererContact: order.ordererContact,
+        orderEmail: order.ordererEmail || '',
+      },
+      deliveryInfo: {
+        recipientName: order.recipientName,
+        recipientPhone: order.recipientContact,
+        address: [order.address, order.detailAddress].filter(Boolean).join(' '),
+        deliveryMemo: order.deliveryMemo || '',
+        courier: order.courier || '',
+        invoiceNum: order.fedexTrackingNumber || '',
+        orderStatus,
+        fedexTrackingNumber: order.fedexTrackingNumber || null,
+        fedexServiceType: order.fedexServiceType || null,
+        fedexEstimatedDelivery: order.fedexEstimatedDelivery || null,
+        fedexShippedAt: order.fedexShippedAt || null,
+      },
+      paymentInfo: {
+        paymentCode: order.orderId,
+        paymentStatus: mapPaymentStatus(order.status),
+        paymentType: order.paymentMethod || 'PAYPAL',
+        paymentApprovedAt: order.approvedAt || order.createdAt,
+        paymentAmount: order.amount || 0,
+      },
+    },
+    message: 'Order detail retrieved',
+  });
+});
+
+// Customer - Order Status Count
+app.get('/datepalm-bay/api/mvp/order/status-count', (req, res) => {
+  console.log('\n=== [Customer] 주문 상태 카운트 ===');
+
+  const orders = customerOrders.filter(o => ['SUCCESS', 'DELIVERY', 'DELIVERED'].includes(o.status));
+
+  res.json({
+    ok: true,
+    data: {
+      orderCompleted: orders.filter(o => o.status === 'SUCCESS').length,
+      shipping: orders.filter(o => o.status === 'DELIVERY').length,
+      delivered: orders.filter(o => o.status === 'DELIVERED').length,
+      purchaseConfirmed: 0,
+    },
+    message: 'Status count retrieved',
   });
 });
 
@@ -4195,6 +4692,430 @@ app.post('/datepalm-bay/api/mvp/coupons/use/:code', (req, res) => {
   });
 });
 
+// ======================================
+// FedEx 물류 API
+// ======================================
+
+// FedEx 배송비 견적 조회
+app.post('/datepalm-bay/api/fedex/rates', async (req, res) => {
+  console.log('\n=== [FedEx] 배송비 견적 조회 ===');
+  const { recipient, packages, serviceType } = req.body.data || req.body;
+
+  if (!recipient || !packages || !packages.length) {
+    return res.status(400).json({
+      ok: false,
+      data: null,
+      message: 'recipient and packages are required'
+    });
+  }
+
+  console.log(`  수신자: ${recipient.city}, ${recipient.countryCode}`);
+  console.log(`  패키지 수: ${packages.length}`);
+
+  try {
+    const rates = await fedexService.getRates({ recipient, packages, serviceType });
+
+    console.log(`✅ 배송비 견적 ${rates.length}건 조회 완료`);
+
+    res.json({
+      ok: true,
+      data: { rates },
+      message: 'Rate quotes retrieved successfully'
+    });
+  } catch (error) {
+    console.error('FedEx rates error:', error.message);
+    res.status(500).json({
+      ok: false,
+      data: null,
+      message: error.message || 'Failed to get FedEx rate quotes'
+    });
+  }
+});
+
+// FedEx 배송 생성 + 라벨 발급 (Admin)
+app.post('/datepalm-bay/api/admin/fedex/create-shipment', async (req, res) => {
+  console.log('\n=== [FedEx] 배송 생성 ===');
+  const { orderCode, serviceType, packages, labelFormat } = req.body.data || req.body;
+
+  if (!orderCode) {
+    return res.status(400).json({
+      ok: false,
+      data: null,
+      message: 'orderCode is required'
+    });
+  }
+
+  // 주문 조회
+  const order = customerOrders.find(o => o.orderId === orderCode);
+  if (!order) {
+    return res.status(404).json({
+      ok: false,
+      data: null,
+      message: 'Order not found'
+    });
+  }
+
+  if (order.fedexTrackingNumber) {
+    return res.status(400).json({
+      ok: false,
+      data: null,
+      message: 'FedEx shipment already exists for this order'
+    });
+  }
+
+  console.log(`  주문번호: ${orderCode}`);
+  console.log(`  수신자: ${order.recipientName}`);
+  console.log(`  서비스: ${serviceType || 'FEDEX_INTERNATIONAL_PRIORITY'}`);
+
+  // 수신자 주소 자동 추출
+  const recipient = {
+    name: order.recipientName,
+    phone: order.recipientContact,
+    streetLines: [order.address, order.detailAddress].filter(Boolean),
+    postalCode: order.postalCode,
+    city: req.body.data?.recipientCity || '',
+    stateOrProvince: req.body.data?.recipientState || '',
+    countryCode: req.body.data?.recipientCountry || 'US'
+  };
+
+  const shipmentPackages = packages || [{
+    weight: 1.0,
+    length: 25,
+    width: 20,
+    height: 15
+  }];
+
+  try {
+    const result = await fedexService.createShipment({
+      recipient,
+      packages: shipmentPackages,
+      serviceType: serviceType || 'FEDEX_INTERNATIONAL_PRIORITY',
+      labelFormat: labelFormat || 'PDF'
+    });
+
+    // 주문 데이터 업데이트
+    order.fedexTrackingNumber = result.trackingNumber;
+    order.fedexLabelBase64 = result.label;
+    order.fedexServiceType = serviceType || 'FEDEX_INTERNATIONAL_PRIORITY';
+    order.fedexEstimatedDelivery = result.estimatedDelivery;
+    order.fedexShippedAt = new Date().toISOString();
+    order.courier = 'FEDEX';
+    order.status = 'DELIVERY';
+
+    console.log(`✅ FedEx 배송 생성 완료`);
+    console.log(`  트래킹 번호: ${result.trackingNumber}`);
+    console.log(`  예상 배송일: ${result.estimatedDelivery}`);
+
+    res.json({
+      ok: true,
+      data: {
+        orderId: order.orderId,
+        trackingNumber: result.trackingNumber,
+        serviceType: order.fedexServiceType,
+        estimatedDelivery: result.estimatedDelivery,
+        status: order.status
+      },
+      message: 'FedEx shipment created successfully'
+    });
+  } catch (error) {
+    console.error('FedEx create shipment error:', error.message);
+    res.status(500).json({
+      ok: false,
+      data: null,
+      message: error.message || 'Failed to create FedEx shipment'
+    });
+  }
+});
+
+// FedEx 라벨 다운로드 (Admin)
+app.get('/datepalm-bay/api/admin/fedex/label/:orderCode', (req, res) => {
+  console.log('\n=== [FedEx] 라벨 다운로드 ===');
+  const { orderCode } = req.params;
+
+  const order = customerOrders.find(o => o.orderId === orderCode);
+  if (!order) {
+    return res.status(404).json({
+      ok: false,
+      data: null,
+      message: 'Order not found'
+    });
+  }
+
+  if (!order.fedexLabelBase64) {
+    return res.status(404).json({
+      ok: false,
+      data: null,
+      message: 'No FedEx label available for this order'
+    });
+  }
+
+  console.log(`  주문번호: ${orderCode}`);
+  console.log(`  트래킹: ${order.fedexTrackingNumber}`);
+
+  // base64 PDF를 바이너리로 변환하여 전송
+  const labelBuffer = Buffer.from(order.fedexLabelBase64, 'base64');
+  res.set({
+    'Content-Type': 'application/pdf',
+    'Content-Disposition': `attachment; filename="fedex-label-${orderCode}.pdf"`,
+    'Content-Length': labelBuffer.length
+  });
+  res.send(labelBuffer);
+});
+
+// FedEx 배송 추적
+app.post('/datepalm-bay/api/fedex/track', async (req, res) => {
+  console.log('\n=== [FedEx] 배송 추적 ===');
+  const { trackingNumber, trackingNumbers } = req.body.data || req.body;
+
+  const numbers = trackingNumbers || (trackingNumber ? [trackingNumber] : []);
+
+  if (!numbers.length) {
+    return res.status(400).json({
+      ok: false,
+      data: null,
+      message: 'trackingNumber or trackingNumbers is required'
+    });
+  }
+
+  console.log(`  추적 번호: ${numbers.join(', ')}`);
+
+  try {
+    const trackingResults = await fedexService.trackShipment(numbers);
+
+    console.log(`✅ 배송 추적 완료: ${trackingResults.length}건`);
+
+    res.json({
+      ok: true,
+      data: { trackingResults },
+      message: 'Tracking information retrieved successfully'
+    });
+  } catch (error) {
+    console.error('FedEx tracking error:', error.message);
+    res.status(500).json({
+      ok: false,
+      data: null,
+      message: error.message || 'Failed to track FedEx shipment'
+    });
+  }
+});
+
+// FedEx 주소 검증
+app.post('/datepalm-bay/api/fedex/validate-address', async (req, res) => {
+  console.log('\n=== [FedEx] 주소 검증 ===');
+  const { address } = req.body.data || req.body;
+
+  if (!address) {
+    return res.status(400).json({
+      ok: false,
+      data: null,
+      message: 'address is required'
+    });
+  }
+
+  console.log(`  주소: ${address.streetLines?.[0]}, ${address.city}, ${address.countryCode}`);
+
+  try {
+    const validationResult = await fedexService.validateAddress(address);
+
+    console.log(`✅ 주소 검증 완료`);
+
+    res.json({
+      ok: true,
+      data: validationResult,
+      message: 'Address validation completed'
+    });
+  } catch (error) {
+    console.error('FedEx address validation error:', error.message);
+    res.status(500).json({
+      ok: false,
+      data: null,
+      message: error.message || 'Failed to validate address'
+    });
+  }
+});
+
+// ========================================
+// FedEx Pickup (픽업 예약/취소)
+// ========================================
+
+// POST /datepalm-bay/api/admin/fedex/schedule-pickup - 픽업 예약
+app.post('/datepalm-bay/api/admin/fedex/schedule-pickup', async (req, res) => {
+  console.log('\n=== [FedEx] 픽업 예약 ===');
+  const { orderCode, readyDate, readyTime, closeTime, pickupType, totalWeight, packageCount, remarks } = req.body.data || req.body;
+
+  try {
+    // 주문이 있으면 주문 정보에 픽업 정보 연결
+    let order = null;
+    if (orderCode) {
+      order = customerOrders.find(o => o.orderCode === orderCode);
+      if (!order) {
+        return res.json({ ok: false, data: null, message: 'Order not found' });
+      }
+    }
+
+    const result = await fedexService.schedulePickup({
+      readyDate,
+      readyTime,
+      closeTime,
+      pickupType: pickupType || 'FUTURE_DAY',
+      totalWeight: totalWeight || 1.0,
+      packageCount: packageCount || 1,
+      remarks,
+    });
+
+    // 주문에 픽업 정보 저장
+    if (order) {
+      order.fedexPickupConfirmation = result.pickupConfirmationCode;
+      order.fedexPickupDate = readyDate;
+      order.fedexPickupTime = `${readyTime} ~ ${closeTime}`;
+    }
+
+    res.json({ ok: true, data: result, message: 'Pickup scheduled successfully' });
+  } catch (error) {
+    console.error('FedEx pickup schedule error:', error.message);
+    res.status(500).json({ ok: false, data: null, message: error.message || 'Failed to schedule pickup' });
+  }
+});
+
+// PUT /datepalm-bay/api/admin/fedex/cancel-pickup - 픽업 취소
+app.put('/datepalm-bay/api/admin/fedex/cancel-pickup', async (req, res) => {
+  console.log('\n=== [FedEx] 픽업 취소 ===');
+  const { pickupConfirmationCode, scheduledDate, orderCode } = req.body.data || req.body;
+
+  try {
+    if (!pickupConfirmationCode || !scheduledDate) {
+      return res.json({ ok: false, data: null, message: 'pickupConfirmationCode and scheduledDate are required' });
+    }
+
+    const result = await fedexService.cancelPickup(pickupConfirmationCode, scheduledDate);
+
+    // 주문에서 픽업 정보 제거
+    if (orderCode) {
+      const order = customerOrders.find(o => o.orderCode === orderCode);
+      if (order) {
+        order.fedexPickupConfirmation = null;
+        order.fedexPickupDate = null;
+        order.fedexPickupTime = null;
+      }
+    }
+
+    res.json({ ok: true, data: result, message: 'Pickup cancelled successfully' });
+  } catch (error) {
+    console.error('FedEx pickup cancel error:', error.message);
+    res.status(500).json({ ok: false, data: null, message: error.message || 'Failed to cancel pickup' });
+  }
+});
+
+// ═══════════════════════════════════════════════
+// FedEx Global Trade API
+// ═══════════════════════════════════════════════
+
+// POST /datepalm-bay/api/fedex/global-trade/regulatory - 규제 서류 조회
+app.post('/datepalm-bay/api/fedex/global-trade/regulatory', async (req, res) => {
+  console.log('\n=== [FedEx] 규제 서류 조회 ===');
+  const { destinationAddress, carrierCode, totalWeight, commodities, shipDate } = req.body.data || req.body;
+
+  try {
+    if (!destinationAddress?.countryCode) {
+      return res.json({ ok: false, data: null, message: 'destinationAddress.countryCode is required' });
+    }
+
+    const result = await fedexService.retrieveRegulatoryDocuments({
+      destinationAddress,
+      carrierCode,
+      totalWeight,
+      commodities,
+      shipDate,
+    });
+
+    console.log(`✅ 규제 서류 ${result.regulatoryDocuments.length}건, 주의사항 ${result.advisories.length}건`);
+
+    res.json({
+      ok: true,
+      data: result,
+      message: 'Regulatory documents retrieved successfully',
+    });
+  } catch (error) {
+    console.error('FedEx regulatory docs error:', error.message);
+    res.status(500).json({ ok: false, data: null, message: error.message || 'Failed to retrieve regulatory documents' });
+  }
+});
+
+// ═══════════════════════════════════════════════
+// FedEx Trade Documents Upload API
+// ═══════════════════════════════════════════════
+
+// POST /datepalm-bay/api/admin/fedex/upload-documents - 통관 서류 업로드 (Pre-shipment)
+app.post('/datepalm-bay/api/admin/fedex/upload-documents', async (req, res) => {
+  console.log('\n=== [FedEx] 통관 서류 업로드 ===');
+  const { orderCode, destinationCountryCode, documents, workflowName, carrierCode } = req.body.data || req.body;
+
+  try {
+    if (!documents || documents.length === 0) {
+      return res.json({ ok: false, data: null, message: 'At least one document is required' });
+    }
+
+    if (documents.length > 5) {
+      return res.json({ ok: false, data: null, message: 'Maximum 5 documents per upload' });
+    }
+
+    if (!destinationCountryCode) {
+      return res.json({ ok: false, data: null, message: 'destinationCountryCode is required' });
+    }
+
+    // 주문 조회 (orderCode가 있는 경우)
+    let order = null;
+    if (orderCode) {
+      order = customerOrders.find(o => o.orderCode === orderCode);
+      if (!order) {
+        return res.json({ ok: false, data: null, message: `Order not found: ${orderCode}` });
+      }
+    }
+
+    // Post-shipment인 경우 트래킹 번호 필요
+    const isPostShipment = workflowName === 'ETDPostShipment';
+    const trackingNumber = isPostShipment && order ? order.fedexTrackingNumber : undefined;
+
+    if (isPostShipment && !trackingNumber) {
+      return res.json({ ok: false, data: null, message: 'Post-shipment upload requires a tracking number. Create shipment first.' });
+    }
+
+    const result = await fedexService.uploadTradeDocuments({
+      workflowName: workflowName || 'ETDPreShipment',
+      carrierCode: carrierCode || 'FDXE',
+      destinationCountryCode,
+      documents,
+      trackingNumber,
+    });
+
+    // 주문에 업로드된 서류 정보 저장
+    if (order) {
+      if (!order.fedexTradeDocuments) {
+        order.fedexTradeDocuments = [];
+      }
+      result.documentStatuses.forEach((doc) => {
+        order.fedexTradeDocuments.push({
+          docId: doc.docId,
+          documentType: doc.documentType,
+          uploadedAt: new Date().toISOString(),
+          workflow: workflowName || 'ETDPreShipment',
+        });
+      });
+    }
+
+    console.log(`✅ 서류 ${result.documentStatuses.length}건 업로드 완료`);
+
+    res.json({
+      ok: true,
+      data: result,
+      message: 'Trade documents uploaded successfully',
+    });
+  } catch (error) {
+    console.error('FedEx document upload error:', error.message);
+    res.status(500).json({ ok: false, data: null, message: error.message || 'Failed to upload trade documents' });
+  }
+});
+
 // 전역 에러 핸들러 (모든 라우트 이후에 배치)
 app.use(handleMulterError);
 
@@ -4257,6 +5178,8 @@ Available Endpoints:
 🌐 Frontend - Products:
   GET    /datepalm-bay/api/mvp/product/normal/list
   GET    /datepalm-bay/api/mvp/product/normal/detail/:code
+  GET    /datepalm-bay/api/mvp/product/brands
+  GET    /datepalm-bay/api/mvp/product/brand/list
 
 🤝 Frontend - Group Buy Teams:
   POST   /datepalm-bay/api/mvp/group-buy/teams
@@ -4266,6 +5189,11 @@ Available Endpoints:
   GET    /datepalm-bay/api/mvp/group-buy/teams/user/:userId
   POST   /datepalm-bay/api/mvp/group-buy/teams/:teamId/checkout
 
+🛒 Frontend - Orders:
+  GET    /datepalm-bay/api/mvp/order/history
+  GET    /datepalm-bay/api/mvp/order/detail/:code
+  GET    /datepalm-bay/api/mvp/order/status-count
+
 📱 SNS Reviews:
   GET    /datepalm-bay/api/mvp/product/:productCode/sns-reviews
   GET    /datepalm-bay/api/admin/sns-reviews
@@ -4273,6 +5201,21 @@ Available Endpoints:
   PUT    /datepalm-bay/api/admin/sns-reviews/:id/status
   POST   /datepalm-bay/api/admin/sns-reviews/collect
   GET    /datepalm-bay/api/admin/sns-reviews/stats
+
+📦 FedEx Logistics:
+  POST   /datepalm-bay/api/fedex/rates
+  POST   /datepalm-bay/api/admin/fedex/create-shipment
+  GET    /datepalm-bay/api/admin/fedex/label/:orderCode
+  POST   /datepalm-bay/api/fedex/track
+  POST   /datepalm-bay/api/fedex/validate-address
+  POST   /datepalm-bay/api/admin/fedex/schedule-pickup
+  PUT    /datepalm-bay/api/admin/fedex/cancel-pickup
+
+🌐 FedEx Global Trade:
+  POST   /datepalm-bay/api/fedex/global-trade/regulatory
+
+📄 FedEx Trade Documents:
+  POST   /datepalm-bay/api/admin/fedex/upload-documents
   `);
 
   // API 연결 상태 출력
@@ -4280,6 +5223,14 @@ Available Endpoints:
   console.log(`  YouTube API: ${process.env.YOUTUBE_API_KEY ? '✅ Configured' : '❌ Not configured'}`);
   console.log(`  TikTok API: ${process.env.TIKTOK_CLIENT_KEY && process.env.TIKTOK_CLIENT_SECRET ? '✅ Configured' : '⚠️  Not configured (optional)'}`);
   console.log(`  Instagram API: ${process.env.INSTAGRAM_ACCESS_TOKEN && process.env.INSTAGRAM_BUSINESS_ACCOUNT_ID ? '✅ Configured' : '⚠️  Not configured (optional)'}`);
+  console.log(`  FedEx API: ${process.env.FEDEX_API_KEY && process.env.FEDEX_SECRET_KEY ? '✅ Configured' : '⚠️  Not configured (optional)'}`);
+
+  if (!process.env.FEDEX_API_KEY || !process.env.FEDEX_SECRET_KEY) {
+    console.log('\n  📝 FedEx API 설정 방법:');
+    console.log('     1. https://developer.fedex.com/ 에서 개발자 계정 생성');
+    console.log('     2. API Project 생성 (Rate, Ship, Track, Address Validation)');
+    console.log('     3. .env 파일에 FEDEX_API_KEY, FEDEX_SECRET_KEY, FEDEX_ACCOUNT_NUMBER 설정');
+  }
 
   if (!process.env.TIKTOK_CLIENT_KEY || !process.env.TIKTOK_CLIENT_SECRET) {
     console.log('\n  📝 TikTok API 설정 방법:');
