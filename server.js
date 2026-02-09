@@ -2042,6 +2042,188 @@ app.post('/datepalm-bay/api/mvp/member/sms/verify', (req, res) => {
 });
 
 // ======================================
+// Email Verification (Sign Up)
+// ======================================
+const emailVerifications = {};
+
+app.post('/datepalm-bay/api/mvp/member/email/verify/send', (req, res) => {
+  console.log('\n=== [Email] Send Verification Code ===');
+  const { email } = req.body;
+
+  if (!email) {
+    return res.json({ ok: false, data: null, message: 'Email is required' });
+  }
+
+  const existingUser = users.find(u => u.email === email);
+  if (existingUser) {
+    return res.json({ ok: false, data: null, message: 'This email is already in use.' });
+  }
+
+  const code = String(Math.floor(100000 + Math.random() * 900000));
+  const requestId = `email-${Date.now()}`;
+
+  emailVerifications[requestId] = { code, email, createdAt: Date.now() };
+
+  console.log(`📧 Email OTP for ${email}: ${code}`);
+  console.log(`   Request ID: ${requestId}`);
+
+  res.json({ ok: true, data: requestId, message: 'Email verification code sent' });
+});
+
+app.patch('/datepalm-bay/api/mvp/member/verify/auth-email', (req, res) => {
+  console.log('\n=== [Email] Verify OTP Code ===');
+  const { requestId, code } = req.body;
+
+  const verification = emailVerifications[requestId];
+
+  if (!verification) {
+    return res.json({ ok: false, data: null, message: 'Invalid request' });
+  }
+
+  if (Date.now() - verification.createdAt > 5 * 60 * 1000) {
+    delete emailVerifications[requestId];
+    return res.json({ ok: false, data: null, message: 'Code expired' });
+  }
+
+  if (verification.code !== code) {
+    console.log(`❌ Email code mismatch: expected ${verification.code}, got ${code}`);
+    return res.json({ ok: false, data: null, message: 'Code does not match' });
+  }
+
+  delete emailVerifications[requestId];
+  console.log('✅ Email verification successful');
+  res.json({ ok: true, data: 'verified', message: 'Email verified successfully' });
+});
+
+// ======================================
+// Check Duplicate ID / Email
+// ======================================
+app.post('/datepalm-bay/api/mvp/member/check-id', (req, res) => {
+  console.log('\n=== [Member] Check Duplicate ID ===');
+  const { id } = req.body;
+  const isDuplicate = users.some(u => u.id === id);
+  console.log(`ID "${id}" duplicate: ${isDuplicate}`);
+  res.json({ ok: true, data: isDuplicate });
+});
+
+app.post('/datepalm-bay/api/mvp/member/check-email', (req, res) => {
+  console.log('\n=== [Member] Check Duplicate Email ===');
+  const email = typeof req.body === 'string' ? req.body : req.body.email || req.body;
+  const isDuplicate = users.some(u => u.email === email);
+  console.log(`Email "${email}" duplicate: ${isDuplicate}`);
+  res.json({ ok: true, data: isDuplicate });
+});
+
+// ======================================
+// Member Create (Sign Up)
+// ======================================
+app.post('/datepalm-bay/api/mvp/member/create', (req, res) => {
+  console.log('\n=== [Member] Create New Member ===');
+  const { id, password, name, email, phone, birthdate, country } = req.body;
+
+  if (!id || !password || !name || !email) {
+    return res.json({ ok: false, data: null, message: 'Required fields missing' });
+  }
+
+  const existingUser = users.find(u => u.id === id || u.email === email);
+  if (existingUser) {
+    return res.json({ ok: false, data: null, message: 'User already exists' });
+  }
+
+  const newUser = {
+    id,
+    password,
+    code: `USER-${String(users.length + 1).padStart(3, '0')}`,
+    name,
+    phone: phone || '',
+    email,
+    createAt: new Date().toISOString(),
+    status: 'ACTIVE',
+    birthDate: birthdate || '',
+    country: country || 'UNITED_STATES',
+    memberLevel: 'BRONZE',
+    birthMonth: birthdate ? new Date(birthdate).getMonth() + 1 : 1,
+    lastPurchaseDate: null,
+    totalPurchaseCount: 0,
+    totalPurchaseAmount: 0,
+  };
+
+  users.push(newUser);
+
+  // Also add to members list
+  const newMember = {
+    code: newUser.code,
+    name: newUser.name,
+    phone: newUser.phone,
+    email: newUser.email,
+    status: 'ACTIVE',
+    createAt: newUser.createAt,
+    birthDate: newUser.birthDate,
+    country: newUser.country,
+  };
+  members.push(newMember);
+
+  console.log(`✅ New member created: ${name} (${email})`);
+
+  res.json({
+    ok: true,
+    data: {
+      id: newUser.id,
+      code: newUser.code,
+      name: newUser.name,
+      email: newUser.email,
+      phone: newUser.phone,
+      birthDate: newUser.birthDate,
+      country: newUser.country,
+      status: newUser.status,
+      createDatetime: newUser.createAt,
+    },
+    message: 'Member created successfully',
+  });
+});
+
+// ======================================
+// Forgot Account - Send Auth Mail
+// ======================================
+app.put('/datepalm-bay/api/mvp/member/send-auth-mail', (req, res) => {
+  console.log('\n=== [Auth] Send Auth Mail ===');
+  const { email, type } = req.body;
+
+  const user = users.find(u => u.email === email);
+  if (!user) {
+    return res.json({ ok: false, data: null, message: 'No user found with this email.' });
+  }
+
+  const code = String(Math.floor(100000 + Math.random() * 900000));
+  const requestId = `auth-mail-${Date.now()}`;
+
+  emailVerifications[requestId] = { code, email, type, createdAt: Date.now() };
+
+  console.log(`📧 Auth mail OTP for ${email} (${type}): ${code}`);
+  console.log(`   Request ID: ${requestId}`);
+
+  res.json({ ok: true, data: requestId, message: 'Auth mail sent' });
+});
+
+// ======================================
+// Reset Password
+// ======================================
+app.patch('/datepalm-bay/api/mvp/member/edit/change-password', (req, res) => {
+  console.log('\n=== [Auth] Change Password ===');
+  const { requestId, email, newPassword } = req.body;
+
+  const user = users.find(u => u.email === email);
+  if (!user) {
+    return res.json({ ok: false, data: null, message: 'User not found' });
+  }
+
+  user.password = newPassword;
+  console.log(`✅ Password changed for ${email}`);
+
+  res.json({ ok: true, data: 'success', message: 'Password changed successfully' });
+});
+
+// ======================================
 // Mock Events Data
 // ======================================
 const events = [
@@ -5113,6 +5295,144 @@ app.post('/datepalm-bay/api/admin/fedex/upload-documents', async (req, res) => {
   } catch (error) {
     console.error('FedEx document upload error:', error.message);
     res.status(500).json({ ok: false, data: null, message: error.message || 'Failed to upload trade documents' });
+  }
+});
+
+// ======================================
+// Dashboard Stats (Real Data from customerOrders)
+// ======================================
+app.get('/datepalm-bay/api/admin/dashboard/stats', (req, res) => {
+  console.log('\n=== [Dashboard] Fetching Stats ===');
+
+  const now = new Date();
+  const thisMonth = now.getMonth();
+  const thisYear = now.getFullYear();
+
+  const paidStatuses = ['SUCCESS', 'DELIVERY', 'DELIVERED'];
+  const paidOrders = customerOrders.filter(o => paidStatuses.includes(o.status));
+
+  const thisMonthOrders = paidOrders.filter(o => {
+    const d = new Date(o.createdAt);
+    return d.getMonth() === thisMonth && d.getFullYear() === thisYear;
+  });
+
+  const lastMonth = thisMonth === 0 ? 11 : thisMonth - 1;
+  const lastMonthYear = thisMonth === 0 ? thisYear - 1 : thisYear;
+  const lastMonthOrders = paidOrders.filter(o => {
+    const d = new Date(o.createdAt);
+    return d.getMonth() === lastMonth && d.getFullYear() === lastMonthYear;
+  });
+
+  const monthlyRevenue = thisMonthOrders.reduce((sum, o) => sum + o.amount, 0);
+  const previousMonthRevenue = lastMonthOrders.reduce((sum, o) => sum + o.amount, 0);
+  const totalRevenue = paidOrders.reduce((sum, o) => sum + o.amount, 0);
+
+  const allMembers = [...members, ...users];
+  const totalMembers = allMembers.length;
+  const newMembersThisMonth = allMembers.filter(m => {
+    const d = new Date(m.createAt);
+    return d.getMonth() === thisMonth && d.getFullYear() === thisYear;
+  }).length;
+
+  const ordersByStatus = {};
+  ['PENDING', 'SUCCESS', 'DELIVERY', 'DELIVERED', 'REFUNDED'].forEach(s => {
+    ordersByStatus[s] = customerOrders.filter(o => o.status === s).length;
+  });
+
+  const recentOrders = [...customerOrders]
+    .sort((a, b) => new Date(b.createdAt) - new Date(a.createdAt))
+    .slice(0, 5)
+    .map(o => ({
+      orderId: o.orderId,
+      status: o.status,
+      customerName: o.ordererName,
+      productName: o.productName,
+      amount: o.amount,
+      paymentMethod: o.paymentMethod || 'N/A',
+      createdAt: o.createdAt,
+    }));
+
+  const productRevenue = {};
+  paidOrders.forEach(o => {
+    const name = o.productName || 'Unknown';
+    productRevenue[name] = (productRevenue[name] || 0) + o.amount;
+  });
+  const categoryBreakdown = Object.entries(productRevenue).map(([label, amount]) => ({
+    label,
+    amount,
+    percentage: totalRevenue > 0 ? Math.round((amount / totalRevenue) * 100) : 0,
+  }));
+
+  const monthlyTrend = [];
+  const monthNames = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+  for (let i = 5; i >= 0; i--) {
+    let m = thisMonth - i;
+    let y = thisYear;
+    if (m < 0) { m += 12; y -= 1; }
+    const mOrders = paidOrders.filter(o => {
+      const d = new Date(o.createdAt);
+      return d.getMonth() === m && d.getFullYear() === y;
+    });
+    monthlyTrend.push({
+      month: monthNames[m],
+      revenue: mOrders.reduce((sum, o) => sum + o.amount, 0),
+      orders: mOrders.length,
+    });
+  }
+
+  const totalOrders = customerOrders.length;
+  const avgOrderValue = paidOrders.length > 0 ? Math.round((totalRevenue / paidOrders.length) * 100) / 100 : 0;
+
+  console.log(`Dashboard: Revenue=$${monthlyRevenue.toFixed(2)}, Orders=${totalOrders}, Members=${totalMembers}`);
+  res.json({ monthlyRevenue, previousMonthRevenue, totalRevenue, totalOrders, totalMembers, newMembersThisMonth, avgOrderValue, ordersByStatus, recentOrders, categoryBreakdown, monthlyTrend });
+});
+
+// ======================================
+// Google OAuth Token Verification
+// ======================================
+app.post('/datepalm-bay/mvp/google-login-oauth', (req, res) => {
+  console.log('\n=== [Auth] Google OAuth Login ===');
+  const { credential } = req.body;
+
+  if (!credential) {
+    return res.status(400).json({ message: 'No credential provided' });
+  }
+
+  try {
+    const parts = credential.split('.');
+    const payload = JSON.parse(Buffer.from(parts[1], 'base64url').toString('utf8'));
+    console.log(`Google OAuth user: ${payload.name} (${payload.email})`);
+
+    let user = users.find(u => u.email === payload.email);
+
+    if (!user) {
+      const newUser = {
+        id: payload.email,
+        password: '',
+        code: `USER-G-${Date.now()}`,
+        name: payload.name || payload.email.split('@')[0],
+        phone: '',
+        email: payload.email,
+        createAt: new Date().toISOString(),
+        status: 'ACTIVE',
+        memberLevel: 'BASIC',
+        birthMonth: 1,
+        lastPurchaseDate: null,
+        totalPurchaseCount: 0,
+        totalPurchaseAmount: 0,
+        googleId: payload.sub,
+        picture: payload.picture,
+      };
+      users.push(newUser);
+      user = newUser;
+      console.log(`New Google user registered: ${user.name}`);
+    }
+
+    const accessToken = `google-oauth-${user.code}-${Date.now()}`;
+    res.json({ accessToken, id: user.id, code: user.code, name: user.name, email: user.email, phone: user.phone, birthDate: user.birthDate || '', country: user.country || '', status: user.status });
+  } catch (e) {
+    console.error('Google token decode error:', e.message);
+    res.status(401).json({ message: 'Invalid Google token' });
   }
 });
 
