@@ -18,7 +18,25 @@ const fedexService = require('./services/fedex');
 // ========================================
 // 파일 기반 영속성 (서버 재시작 시 데이터 유지)
 // ========================================
-const DATA_FILE = path.join(__dirname, 'mock-data.json');
+// Railway Volume 지원: DATA_DIR 환경변수가 설정되면 해당 경로에 데이터 저장
+// Railway Volume 미사용 시 앱 디렉토리에 저장 (배포 시 데이터 유실됨)
+const DATA_DIR = process.env.DATA_DIR || __dirname;
+const DATA_FILE = path.join(DATA_DIR, 'mock-data.json');
+
+// DATA_DIR 디렉토리 생성 (Volume 마운트 시 하위 디렉토리 보장)
+if (DATA_DIR !== __dirname && !fs.existsSync(DATA_DIR)) {
+  fs.mkdirSync(DATA_DIR, { recursive: true });
+  console.log(`📂 데이터 디렉토리 생성: ${DATA_DIR}`);
+}
+
+// Volume 사용 시, 초기 데이터가 없으면 앱 디렉토리에서 복사
+if (DATA_DIR !== __dirname && !fs.existsSync(DATA_FILE)) {
+  const srcDataFile = path.join(__dirname, 'mock-data.json');
+  if (fs.existsSync(srcDataFile)) {
+    fs.copyFileSync(srcDataFile, DATA_FILE);
+    console.log(`📋 초기 데이터를 Volume으로 복사: ${srcDataFile} → ${DATA_FILE}`);
+  }
+}
 
 // 데이터 로드 함수
 function loadData() {
@@ -73,11 +91,12 @@ function getBaseUrl(req) {
   return `${protocol}://${host}`;
 }
 
-// 업로드 폴더 생성
-const uploadDir = path.join(__dirname, 'uploads');
+// 업로드 폴더 생성 (Volume 지원)
+const uploadDir = path.join(DATA_DIR, 'uploads');
 if (!fs.existsSync(uploadDir)) {
   fs.mkdirSync(uploadDir, { recursive: true });
 }
+console.log(`📁 업로드 디렉토리: ${uploadDir}`);
 
 // CORS 설정
 app.use(cors());
