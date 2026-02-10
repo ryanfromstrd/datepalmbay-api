@@ -14,6 +14,10 @@ const reviewSummarizer = require('./services/reviewSummarizer');
 const paypalService = require('./services/paypal');
 // FedEx 물류 서비스
 const fedexService = require('./services/fedex');
+// MySQL Database 서비스
+const database = require('./services/database');
+let _useMySQL = false;
+let _saveTimer = null;
 
 // ========================================
 // 파일 기반 영속성 (서버 재시작 시 데이터 유지)
@@ -38,13 +42,85 @@ if (DATA_DIR !== __dirname && !fs.existsSync(DATA_FILE)) {
   }
 }
 
-// 데이터 로드 함수 (모든 데이터 영속화)
-function loadData() {
+// ========================================
+// MySQL 연결 대기 (지수 백오프 재시도)
+// ========================================
+async function waitForMySQL(maxRetries = 5) {
+  for (let i = 0; i < maxRetries; i++) {
+    try {
+      await database.initTable();
+      console.log('🗄️  MySQL 연결 성공, data_store 테이블 준비 완료');
+      return true;
+    } catch (e) {
+      const delay = Math.min(1000 * Math.pow(2, i), 10000);
+      console.log(`⏳ MySQL 연결 재시도 ${i + 1}/${maxRetries} (${delay}ms 후)... [${e.message}]`);
+      await new Promise(r => setTimeout(r, delay));
+    }
+  }
+  console.log('⚠️  MySQL 연결 실패, JSON 파일 모드로 동작');
+  return false;
+}
+
+// ========================================
+// 데이터 로드 함수 (MySQL → JSON 파일 → 빈 저장소)
+// ========================================
+async function loadData() {
+  const emptyData = { products: [], snsReviews: [], brands: [], orders: null, members: null, users: null, userCoupons: null, coupons: null, groupBuyTeams: [], events: null };
+
+  // 1단계: MySQL에서 로드 시도
+  if (_useMySQL) {
+    try {
+      const mysqlData = await database.loadAll();
+      if (mysqlData && Object.keys(mysqlData).length > 0) {
+        console.log(`🗄️  MySQL에서 데이터 로드: ${mysqlData.products?.length || 0}개 상품, ${mysqlData.brands?.length || 0}개 브랜드, ${(mysqlData.orders || []).length}개 주문`);
+        return {
+          products: mysqlData.products || [],
+          snsReviews: mysqlData.snsReviews || [],
+          brands: mysqlData.brands || [],
+          orders: mysqlData.orders || null,
+          members: mysqlData.members || null,
+          users: mysqlData.users || null,
+          userCoupons: mysqlData.userCoupons || null,
+          coupons: mysqlData.coupons || null,
+          groupBuyTeams: mysqlData.groupBuyTeams || [],
+          events: mysqlData.events || null,
+        };
+      }
+      console.log('🗄️  MySQL 비어있음, JSON 파일 확인...');
+    } catch (e) {
+      console.error('❌ MySQL 로드 실패:', e.message);
+    }
+  }
+
+  // 2단계: JSON 파일에서 로드 (+ MySQL 자동 마이그레이션)
   if (fs.existsSync(DATA_FILE)) {
     try {
       const fileContent = fs.readFileSync(DATA_FILE, 'utf-8');
       const data = JSON.parse(fileContent);
-      console.log(`📁 데이터 로드 완료: ${data.products?.length || 0}개 상품, ${data.snsReviews?.length || 0}개 SNS 리뷰, ${data.brands?.length || 0}개 브랜드, ${data.orders?.length || 0}개 주문, ${data.members?.length || 0}개 회원, ${data.coupons?.length || 0}개 쿠폰`);
+      console.log(`📁 JSON 파일에서 데이터 로드: ${data.products?.length || 0}개 상품, ${data.snsReviews?.length || 0}개 SNS 리뷰, ${data.brands?.length || 0}개 브랜드, ${(data.orders || []).length}개 주문`);
+
+      // MySQL 사용 가능 시, JSON → MySQL 자동 마이그레이션
+      if (_useMySQL) {
+        console.log('🔄 JSON → MySQL 자동 마이그레이션 시작...');
+        try {
+          await database.saveAll({
+            products: data.products || [],
+            snsReviews: data.snsReviews || [],
+            brands: data.brands || [],
+            orders: data.orders || [],
+            members: data.members || [],
+            users: data.users || [],
+            userCoupons: data.userCoupons || [],
+            coupons: data.coupons || [],
+            groupBuyTeams: data.groupBuyTeams || [],
+            events: data.events || [],
+          });
+          console.log('✅ JSON → MySQL 마이그레이션 완료');
+        } catch (e) {
+          console.error('❌ MySQL 마이그레이션 실패 (JSON 데이터로 계속):', e.message);
+        }
+      }
+
       return {
         products: data.products || [],
         snsReviews: data.snsReviews || [],
@@ -58,34 +134,60 @@ function loadData() {
         events: data.events || null,
       };
     } catch (e) {
-      console.error('❌ 데이터 로드 실패:', e.message);
-      return { products: [], snsReviews: [], brands: [], orders: null, members: null, users: null, userCoupons: null, coupons: null, groupBuyTeams: [], events: null };
+      console.error('❌ JSON 데이터 로드 실패:', e.message);
     }
   }
-  console.log('📁 저장된 데이터 없음, 빈 저장소로 시작');
-  return { products: [], snsReviews: [], brands: [], orders: null, members: null, users: null, userCoupons: null, coupons: null, groupBuyTeams: [], events: null };
+
+  // 3단계: 저장된 데이터 없음
+  console.log('📁 저장된 데이터 없음, 기본 데이터 사용');
+  return emptyData;
 }
 
-// 데이터 저장 함수 (모든 데이터 영속화)
+// ========================================
+// 데이터 저장 함수 (500ms debounce → MySQL, 실패 시 JSON 폴백)
+// 동기 함수 시그니처 유지 (28개 호출부 변경 불필요)
+// ========================================
 function saveData() {
+  if (_saveTimer) clearTimeout(_saveTimer);
+  _saveTimer = setTimeout(() => _saveDataImpl(), 500);
+}
+
+async function _saveDataImpl() {
+  _saveTimer = null;
+  const entities = {
+    products: products,
+    snsReviews: snsReviews,
+    brands: brands,
+    orders: customerOrders,
+    members: members,
+    users: users,
+    userCoupons: userCoupons,
+    coupons: coupons,
+    groupBuyTeams: groupBuyTeams,
+    events: events,
+  };
+
+  if (_useMySQL) {
+    try {
+      await database.saveAll(entities);
+      console.log(`🗄️  MySQL 저장 완료: ${products.length}개 상품, ${(customerOrders || []).length}개 주문, ${(members || []).length}개 회원`);
+      return;
+    } catch (e) {
+      console.error('❌ MySQL 저장 실패, JSON 파일로 폴백:', e.message);
+    }
+  }
+
+  // JSON 파일 폴백
+  _saveToFile(entities);
+}
+
+function _saveToFile(entities) {
   try {
-    const dataToSave = {
-      products: products,
-      snsReviews: snsReviews,
-      brands: brands,
-      orders: customerOrders,
-      members: members,
-      users: users,
-      userCoupons: userCoupons,
-      coupons: coupons,
-      groupBuyTeams: groupBuyTeams,
-      events: events,
-      savedAt: new Date().toISOString()
-    };
+    const dataToSave = { ...entities, savedAt: new Date().toISOString() };
     fs.writeFileSync(DATA_FILE, JSON.stringify(dataToSave, null, 2), 'utf-8');
-    console.log(`💾 데이터 저장 완료: ${products.length}개 상품, ${(customerOrders || []).length}개 주문, ${(members || []).length}개 회원`);
+    console.log(`💾 파일 저장 완료: ${entities.products.length}개 상품, ${(entities.orders || []).length}개 주문`);
   } catch (e) {
-    console.error('❌ 데이터 저장 실패:', e.message);
+    console.error('❌ 파일 저장 실패:', e.message);
   }
 }
 
@@ -263,14 +365,9 @@ const handleMulterError = (err, req, res, next) => {
   next();
 };
 
-// 파일에서 영속 데이터 로드
-const loadedData = loadData();
-
-// Mock 상품 데이터 저장소 (파일에서 로드)
-const products = loadedData.products;
-
-// Mock 브랜드 데이터 저장소 (파일에서 로드)
-const brands = loadedData.brands;
+// 데이터 변수 선언 (startServer()에서 MySQL/JSON으로부터 로드하여 재할당)
+let products = [];
+let brands = [];
 
 // Mock 문의 데이터 저장소
 const contacts = [
@@ -300,8 +397,8 @@ const contacts = [
   }
 ];
 
-// Mock 회원 데이터 저장소 (파일에서 로드, 없으면 기본 데이터)
-const members = loadedData.members || [
+// Mock 회원 데이터 저장소 (기본 시드 데이터, startServer()에서 덮어씀)
+let members = [
   {
     code: 'MEM-001',
     name: '김철수',
@@ -328,8 +425,8 @@ const members = loadedData.members || [
   }
 ];
 
-// Mock 로그인 사용자 데이터 (파일에서 로드, 없으면 기본 데이터)
-const users = loadedData.users || [
+// Mock 로그인 사용자 데이터 (기본 시드 데이터, startServer()에서 덮어씀)
+let users = [
   {
     id: 'test',
     password: 'test1234',
@@ -423,8 +520,8 @@ const users = loadedData.users || [
   }
 ];
 
-// 유저별 다운로드한 쿠폰 저장소 (파일에서 로드, 없으면 기본 데이터)
-const userCoupons = loadedData.userCoupons || [
+// 유저별 다운로드한 쿠폰 저장소 (기본 시드 데이터, startServer()에서 덮어씀)
+let userCoupons = [
   {
     id: 'UC-001',
     userId: 'USER-001',
@@ -1524,8 +1621,8 @@ app.get('/datepalm-bay/api/mvp/product/brand/list', (req, res) => {
 // Group Buy Team Endpoints
 // ======================================
 
-// Mock Group Buy Teams storage (파일에서 로드)
-const groupBuyTeams = loadedData.groupBuyTeams || [];
+// Mock Group Buy Teams storage (startServer()에서 로드)
+let groupBuyTeams = [];
 
 // Helper function to generate invite code
 const generateInviteCode = () => {
@@ -2299,9 +2396,9 @@ app.patch('/datepalm-bay/api/mvp/member/edit/change-password', (req, res) => {
 });
 
 // ======================================
-// Mock Events Data (파일에서 로드, 없으면 기본 데이터)
+// Mock Events Data (기본 시드 데이터, startServer()에서 덮어씀)
 // ======================================
-const events = loadedData.events || [
+let events = [
   {
     code: 'EVT-001',
     title: 'New Year Sale 2025',
@@ -2353,9 +2450,9 @@ const events = loadedData.events || [
 ];
 
 // ======================================
-// Mock Coupons Data (파일에서 로드, 없으면 기본 데이터)
+// Mock Coupons Data (기본 시드 데이터, startServer()에서 덮어씀)
 // ======================================
-const coupons = loadedData.coupons || [
+let coupons = [
   {
     code: 'CPN-WELCOME15',
     name: '15% Welcome Coupon',
@@ -3152,8 +3249,8 @@ app.delete('/datepalm-bay/api/admin/event/delete/:code', (req, res) => {
 // SNS 리뷰 Mock 데이터 및 API
 // ========================================
 
-// SNS 리뷰 Mock 데이터 저장소 (파일에서 로드)
-const snsReviews = loadedData.snsReviews;
+// SNS 리뷰 Mock 데이터 저장소 (startServer()에서 로드)
+let snsReviews = [];
 
 // SNS 수집기에 참조 및 저장 콜백 설정
 snsCollector.setReferences(snsReviews, products, saveData);
@@ -3596,8 +3693,8 @@ function extractYouTubeVideoId(url) {
 // 결제 API
 // ========================================
 
-// 주문 목록 저장소 (파일에서 로드, 없으면 시드 데이터)
-let customerOrders = loadedData.orders || [
+// 주문 목록 저장소 (기본 시드 데이터, startServer()에서 덮어씀)
+let customerOrders = [
   {
     orderId: 'ORDER-TEST-FEDEX-001',
     productCode: products[0]?.productCode || 'PROD-TEST',
@@ -5492,131 +5589,91 @@ app.post('/datepalm-bay/mvp/google-login-oauth', (req, res) => {
 // 전역 에러 핸들러 (모든 라우트 이후에 배치)
 app.use(handleMulterError);
 
-app.listen(port, () => {
-  console.log(`
+// ========================================
+// Async 서버 시작 (MySQL 연결 → 데이터 로드 → 서버 시작)
+// ========================================
+async function startServer() {
+  // 1. MySQL 연결 시도
+  _useMySQL = await waitForMySQL(5);
+
+  // 2. MySQL/JSON에서 데이터 로드
+  const loadedData = await loadData();
+
+  // 3. 로드된 데이터를 모듈 변수에 할당 (기본 시드 데이터를 덮어씀)
+  if (loadedData.products && loadedData.products.length > 0) products = loadedData.products;
+  if (loadedData.brands && loadedData.brands.length > 0) brands = loadedData.brands;
+  if (loadedData.members) members = loadedData.members;
+  if (loadedData.users) users = loadedData.users;
+  if (loadedData.userCoupons) userCoupons = loadedData.userCoupons;
+  if (loadedData.groupBuyTeams && loadedData.groupBuyTeams.length > 0) groupBuyTeams = loadedData.groupBuyTeams;
+  if (loadedData.events) events = loadedData.events;
+  if (loadedData.coupons) coupons = loadedData.coupons;
+  if (loadedData.snsReviews && loadedData.snsReviews.length > 0) snsReviews = loadedData.snsReviews;
+  if (loadedData.orders) customerOrders = loadedData.orders;
+
+  // 4. SNS 수집기에 로드된 데이터 참조 재설정
+  snsCollector.setReferences(snsReviews, products, saveData);
+
+  console.log(`\n📊 데이터 로드 완료: ${products.length}개 상품, ${brands.length}개 브랜드, ${(customerOrders || []).length}개 주문, ${(members || []).length}개 회원`);
+
+  // 5. 서버 시작
+  app.listen(port, () => {
+    console.log(`
 ╔═══════════════════════════════════════╗
 ║   Mock API Server Running             ║
 ║   Port: ${port}                          ║
 ║   URL: http://localhost:${port}         ║
+║   Storage: ${_useMySQL ? 'MySQL ✅' : 'JSON File 📁'}              ║
 ╚═══════════════════════════════════════╝
-
-Available Endpoints:
-
-📦 Admin - Products:
-  POST   /datepalm-bay/api/admin/product/create
-  PUT    /datepalm-bay/api/admin/product/edit
-  DELETE /datepalm-bay/api/admin/product/delete
-  GET    /datepalm-bay/api/admin/product/list
-  GET    /datepalm-bay/api/admin/product/detail/:code
-  GET    /datepalm-bay/api/admin/products
-
-👥 Admin - Members:
-  GET    /datepalm-bay/api/admin/member/list
-  GET    /datepalm-bay/api/admin/member/detail/:code
-
-📝 Admin - Contacts/Inquiry:
-  GET    /datepalm-bay/api/admin/inquiry/list
-  GET    /datepalm-bay/api/admin/inquiry/detail/:code
-
-🛒 Admin - Orders:
-  GET    /datepalm-bay/api/admin/order/list
-  GET    /datepalm-bay/api/admin/order/detail/:code
-  GET    /datepalm-bay/api/admin/order/member-orders
-
-🎉 Admin - Events:
-  GET    /datepalm-bay/api/admin/event/list
-  GET    /datepalm-bay/api/admin/event/detail/:code
-  POST   /datepalm-bay/api/admin/event/create
-  PUT    /datepalm-bay/api/admin/event/edit
-  DELETE /datepalm-bay/api/admin/event/delete/:code
-
-🎟️ Admin - Coupons:
-  GET    /datepalm-bay/api/admin/coupon/list
-  GET    /datepalm-bay/api/admin/coupon/detail/:code
-  POST   /datepalm-bay/api/admin/coupon/create
-  PUT    /datepalm-bay/api/admin/coupon/edit
-  DELETE /datepalm-bay/api/admin/coupon/delete/:code
-
-💳 Frontend - Coupon Center:
-  GET    /datepalm-bay/api/mvp/coupons/available
-  GET    /datepalm-bay/api/mvp/coupons/downloadable
-  POST   /datepalm-bay/api/mvp/coupons/download/:code
-  GET    /datepalm-bay/api/mvp/coupons/my
-  POST   /datepalm-bay/api/mvp/coupons/use/:code
-
-🔐 Frontend - Auth:
-  POST   /datepalm-bay/mvp/login
-  GET    /datepalm-bay/api/mvp/member/detail/me
-
-🌐 Frontend - Products:
-  GET    /datepalm-bay/api/mvp/product/normal/list
-  GET    /datepalm-bay/api/mvp/product/normal/detail/:code
-  GET    /datepalm-bay/api/mvp/product/brands
-  GET    /datepalm-bay/api/mvp/product/brand/list
-
-🤝 Frontend - Group Buy Teams:
-  POST   /datepalm-bay/api/mvp/group-buy/teams
-  GET    /datepalm-bay/api/mvp/group-buy/teams/:teamId
-  GET    /datepalm-bay/api/mvp/group-buy/teams/invite/:inviteCode
-  POST   /datepalm-bay/api/mvp/group-buy/teams/:teamId/join
-  GET    /datepalm-bay/api/mvp/group-buy/teams/user/:userId
-  POST   /datepalm-bay/api/mvp/group-buy/teams/:teamId/checkout
-
-🛒 Frontend - Orders:
-  GET    /datepalm-bay/api/mvp/order/history
-  GET    /datepalm-bay/api/mvp/order/detail/:code
-  GET    /datepalm-bay/api/mvp/order/status-count
-
-📱 SNS Reviews:
-  GET    /datepalm-bay/api/mvp/product/:productCode/sns-reviews
-  GET    /datepalm-bay/api/admin/sns-reviews
-  GET    /datepalm-bay/api/admin/sns-reviews/:id
-  PUT    /datepalm-bay/api/admin/sns-reviews/:id/status
-  POST   /datepalm-bay/api/admin/sns-reviews/collect
-  GET    /datepalm-bay/api/admin/sns-reviews/stats
-
-📦 FedEx Logistics:
-  POST   /datepalm-bay/api/fedex/rates
-  POST   /datepalm-bay/api/admin/fedex/create-shipment
-  GET    /datepalm-bay/api/admin/fedex/label/:orderCode
-  POST   /datepalm-bay/api/fedex/track
-  POST   /datepalm-bay/api/fedex/validate-address
-  POST   /datepalm-bay/api/admin/fedex/schedule-pickup
-  PUT    /datepalm-bay/api/admin/fedex/cancel-pickup
-
-🌐 FedEx Global Trade:
-  POST   /datepalm-bay/api/fedex/global-trade/regulatory
-
-📄 FedEx Trade Documents:
-  POST   /datepalm-bay/api/admin/fedex/upload-documents
   `);
 
-  // API 연결 상태 출력
-  console.log('\n🔗 API Connection Status:');
-  console.log(`  YouTube API: ${process.env.YOUTUBE_API_KEY ? '✅ Configured' : '❌ Not configured'}`);
-  console.log(`  TikTok API: ${process.env.TIKTOK_CLIENT_KEY && process.env.TIKTOK_CLIENT_SECRET ? '✅ Configured' : '⚠️  Not configured (optional)'}`);
-  console.log(`  Instagram API: ${process.env.INSTAGRAM_ACCESS_TOKEN && process.env.INSTAGRAM_BUSINESS_ACCOUNT_ID ? '✅ Configured' : '⚠️  Not configured (optional)'}`);
-  console.log(`  FedEx API: ${process.env.FEDEX_API_KEY && process.env.FEDEX_SECRET_KEY ? '✅ Configured' : '⚠️  Not configured (optional)'}`);
+    // API 연결 상태 출력
+    console.log('🔗 API Connection Status:');
+    console.log(`  MySQL: ${_useMySQL ? '✅ Connected' : '⚠️  Not connected (JSON file mode)'}`);
+    console.log(`  YouTube API: ${process.env.YOUTUBE_API_KEY ? '✅ Configured' : '❌ Not configured'}`);
+    console.log(`  TikTok API: ${process.env.TIKTOK_CLIENT_KEY && process.env.TIKTOK_CLIENT_SECRET ? '✅ Configured' : '⚠️  Not configured (optional)'}`);
+    console.log(`  Instagram API: ${process.env.INSTAGRAM_ACCESS_TOKEN && process.env.INSTAGRAM_BUSINESS_ACCOUNT_ID ? '✅ Configured' : '⚠️  Not configured (optional)'}`);
+    console.log(`  FedEx API: ${process.env.FEDEX_API_KEY && process.env.FEDEX_SECRET_KEY ? '✅ Configured' : '⚠️  Not configured (optional)'}`);
+    console.log('');
+  });
+}
 
-  if (!process.env.FEDEX_API_KEY || !process.env.FEDEX_SECRET_KEY) {
-    console.log('\n  📝 FedEx API 설정 방법:');
-    console.log('     1. https://developer.fedex.com/ 에서 개발자 계정 생성');
-    console.log('     2. API Project 생성 (Rate, Ship, Track, Address Validation)');
-    console.log('     3. .env 파일에 FEDEX_API_KEY, FEDEX_SECRET_KEY, FEDEX_ACCOUNT_NUMBER 설정');
+// ========================================
+// Graceful Shutdown (SIGTERM/SIGINT)
+// ========================================
+async function gracefulShutdown(signal) {
+  console.log(`\n🛑 ${signal} received, shutting down gracefully...`);
+
+  // 미완료 debounced save 강제 실행
+  if (_saveTimer) {
+    clearTimeout(_saveTimer);
+    _saveTimer = null;
+    try {
+      await _saveDataImpl();
+      console.log('💾 미완료 저장 강제 실행 완료');
+    } catch (e) {
+      console.error('❌ 강제 저장 실패:', e.message);
+    }
   }
 
-  if (!process.env.TIKTOK_CLIENT_KEY || !process.env.TIKTOK_CLIENT_SECRET) {
-    console.log('\n  📝 TikTok API 설정 방법:');
-    console.log('     1. https://developers.tiktok.com/ 에서 개발자 계정 생성');
-    console.log('     2. App 생성 후 Client Key, Client Secret 발급');
-    console.log('     3. .env 파일에 TIKTOK_CLIENT_KEY, TIKTOK_CLIENT_SECRET 설정');
+  // MySQL 풀 종료
+  if (_useMySQL) {
+    try {
+      await database.close();
+      console.log('🗄️  MySQL connection pool closed');
+    } catch (e) {
+      console.error('❌ MySQL 풀 종료 실패:', e.message);
+    }
   }
 
-  if (!process.env.INSTAGRAM_ACCESS_TOKEN || !process.env.INSTAGRAM_BUSINESS_ACCOUNT_ID) {
-    console.log('\n  📝 Instagram API 설정 방법:');
-    console.log('     1. Facebook Developer App 생성');
-    console.log('     2. Instagram Business 계정 연결');
-    console.log('     3. .env 파일에 INSTAGRAM_ACCESS_TOKEN, INSTAGRAM_BUSINESS_ACCOUNT_ID 설정');
-  }
-  console.log('');
+  process.exit(0);
+}
+
+process.on('SIGTERM', () => gracefulShutdown('SIGTERM'));
+process.on('SIGINT', () => gracefulShutdown('SIGINT'));
+
+// 서버 시작!
+startServer().catch(e => {
+  console.error('❌ Server startup failed:', e);
+  process.exit(1);
 });
