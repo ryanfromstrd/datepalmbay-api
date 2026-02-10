@@ -87,6 +87,24 @@ app.use(express.urlencoded({ extended: true })); // Form data 처리
 // 정적 파일 서빙 (업로드된 이미지)
 app.use('/uploads', express.static(uploadDir));
 
+// 기존 저장된 http://localhost URL을 실제 배포 URL로 자동 변환하는 미들웨어
+app.use((req, res, next) => {
+  const originalJson = res.json.bind(res);
+  res.json = (body) => {
+    if (body) {
+      const baseUrl = getBaseUrl(req);
+      // localhost가 아닌 환경에서만 URL 변환 (배포 환경)
+      if (!baseUrl.includes('localhost')) {
+        const bodyStr = JSON.stringify(body);
+        const rewritten = bodyStr.replace(/http:\/\/localhost:\d+/g, baseUrl);
+        return originalJson(JSON.parse(rewritten));
+      }
+    }
+    return originalJson(body);
+  };
+  next();
+});
+
 // 이미지 검증 설정
 const IMAGE_VALIDATION = {
   MAX_FILE_SIZE: 10 * 1024 * 1024, // 10MB
