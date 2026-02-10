@@ -1,88 +1,5 @@
 {
-  "products": [
-    {
-      "productCode": "PROD-1770016821467",
-      "productName": "Medicube",
-      "productSaleStatus": true,
-      "category": "BRAND",
-      "productOriginPrice": 29,
-      "productRegularPrice": 28,
-      "discountType": "STATIC",
-      "productDiscountPrice": 0,
-      "productPrice": 28,
-      "introduction": "PDRN",
-      "policy": {
-        "deliveryPolicy": ".",
-        "refundPolicy": ".",
-        "exchangePolicy": ".",
-        "shippingCost": 20,
-        "shippingCostType": "CONDITIONAL",
-        "freeShippingThreshold": 100
-      },
-      "detailInfo": "PHA+I21lZGljdWJlLCZuYnNwOyNQRFJOPC9wPg==",
-      "files": {
-        "mainImages": [
-          {
-            "code": "PROD-1770016821467-M1",
-            "url": "https://picsum.photos/seed/medicube/400/400",
-            "originalName": "b5ea0efe6db207be4203c513a817d546.png",
-            "size": 656386,
-            "mimetype": "image/png",
-            "order": 1
-          }
-        ],
-        "detailImages": []
-      },
-      "groupBuyTiers": [],
-      "createdAt": "2026-02-02T07:20:21.467Z",
-      "updatedAt": "2026-02-09T10:24:29.845Z",
-      "shippingCostType": "CONDITIONAL",
-      "shippingCost": 20,
-      "freeShippingThreshold": 100,
-      "brand": "Medicube"
-    },
-    {
-      "productCode": "PROD-1770112851577",
-      "productName": "Meebak",
-      "productSaleStatus": true,
-      "category": "BEAUTY",
-      "productOriginPrice": 25,
-      "productRegularPrice": 24,
-      "discountType": "STATIC",
-      "productDiscountPrice": 0,
-      "productPrice": 24,
-      "introduction": "it's good",
-      "policy": {
-        "deliveryPolicy": ".",
-        "refundPolicy": ".",
-        "exchangePolicy": ".",
-        "shippingCost": 0,
-        "shippingCostType": "FREE",
-        "freeShippingThreshold": 0
-      },
-      "detailInfo": "PHA+I01lZWJhaywmbmJzcDsjPHNwYW4gc3R5bGU9ImNvbG9yOiByZ2IoMjIsIDI0LCAyOSk7Ij5DYW1lbGxpYSZuYnNwO0NsZWFyJm5ic3A7U2VydW08L3NwYW4+PC9wPg==",
-      "files": {
-        "mainImages": [
-          {
-            "code": "PROD-1770112851577-M1",
-            "url": "https://picsum.photos/seed/meebak/400/400",
-            "originalName": "61caATYu9mL._SX679_.jpg",
-            "size": 19068,
-            "mimetype": "image/jpeg",
-            "order": 1
-          }
-        ],
-        "detailImages": []
-      },
-      "groupBuyTiers": [],
-      "createdAt": "2026-02-03T10:00:51.577Z",
-      "updatedAt": "2026-02-09T10:23:32.387Z",
-      "shippingCostType": "FREE",
-      "shippingCost": 0,
-      "freeShippingThreshold": 0,
-      "brand": "Meebak"
-    }
-  ],
+  "products": [],
   "snsReviews": [
     {
       "id": 1,
@@ -3917,5 +3834,5 @@
     "Meebak",
     "Medicube"
   ],
-  "savedAt": "2026-02-09T10:24:29.845Z"
+  "savedAt": "2026-02-10T07:06:41.587Z"
 }

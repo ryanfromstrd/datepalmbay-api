@@ -5384,7 +5384,7 @@ app.get('/datepalm-bay/api/admin/dashboard/stats', (req, res) => {
   const avgOrderValue = paidOrders.length > 0 ? Math.round((totalRevenue / paidOrders.length) * 100) / 100 : 0;
 
   console.log(`Dashboard: Revenue=$${monthlyRevenue.toFixed(2)}, Orders=${totalOrders}, Members=${totalMembers}`);
-  res.json({ monthlyRevenue, previousMonthRevenue, totalRevenue, totalOrders, totalMembers, newMembersThisMonth, avgOrderValue, ordersByStatus, recentOrders, categoryBreakdown, monthlyTrend });
+  res.json({ ok: true, data: { monthlyRevenue, previousMonthRevenue, totalRevenue, totalOrders, totalMembers, newMembersThisMonth, avgOrderValue, ordersByStatus, recentOrders, categoryBreakdown, monthlyTrend } });
 });
 
 // ======================================
