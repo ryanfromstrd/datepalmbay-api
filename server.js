@@ -3117,26 +3117,6 @@ app.get('/datepalm-bay/api/admin/sns-reviews/stats', (req, res) => {
   });
 });
 
-// Instagram API 연결 상태 확인
-app.get('/datepalm-bay/api/admin/sns-reviews/instagram/status', async (req, res) => {
-  try {
-    const instagram = require('./services/instagram');
-    const status = await instagram.checkConnection();
-
-    res.json({
-      ok: status.connected,
-      data: status,
-      message: status.message
-    });
-  } catch (error) {
-    res.json({
-      ok: false,
-      data: { connected: false },
-      message: error.message
-    });
-  }
-});
-
 // 상품별 SNS 리뷰 조회 (프론트엔드용) - 페이지네이션 지원
 app.get('/datepalm-bay/api/mvp/product/:productCode/sns-reviews', (req, res) => {
   const { productCode } = req.params;
@@ -3436,24 +3416,6 @@ app.post('/datepalm-bay/api/admin/sns-reviews/manual', async (req, res) => {
       }
     }
 
-    // Instagram URL 파싱
-    if (url.includes('instagram.com')) {
-      const postId = extractInstagramPostId(url);
-      reviewData = {
-        platform: 'INSTAGRAM',
-        externalId: postId || `manual_${Date.now()}`,
-        contentUrl: url,
-        thumbnailUrl: '',
-        title: null,
-        description: 'Manually added Instagram review',
-        authorName: 'Instagram User',
-        authorId: 'unknown',
-        publishedAt: new Date().toISOString(),
-        viewCount: 0,
-        likeCount: 0,
-      };
-    }
-
     // TikTok URL 파싱 (oEmbed 사용)
     if (url.includes('tiktok.com')) {
       try {
@@ -3489,7 +3451,7 @@ app.post('/datepalm-bay/api/admin/sns-reviews/manual', async (req, res) => {
     if (!reviewData) {
       return res.status(400).json({
         ok: false,
-        message: 'Unsupported URL format. Please use YouTube, TikTok, or Instagram URLs.'
+        message: 'Unsupported URL format. Please use YouTube or TikTok URLs.'
       });
     }
 
@@ -3550,14 +3512,8 @@ function extractYouTubeVideoId(url) {
   return null;
 }
 
-// Instagram Post ID 추출 헬퍼 함수
-function extractInstagramPostId(url) {
-  const match = url.match(/instagram\.com\/(?:p|reel|reels)\/([^\/\?]+)/);
-  return match ? match[1] : null;
-}
-
 // ========================================
-// 결제 API (Toss Payments)
+// 결제 API
 // ========================================
 
 // 주문 목록 저장소 (메모리) - 시드 데이터 포함

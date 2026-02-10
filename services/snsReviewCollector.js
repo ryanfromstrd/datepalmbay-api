@@ -1,11 +1,10 @@
 /**
  * SNS Review Collector Service
  *
- * YouTube, TikTok, Instagram에서 상품 관련 리뷰를 자동으로 수집합니다.
+ * YouTube, TikTok에서 상품 관련 리뷰를 자동으로 수집합니다.
  */
 
 const { searchProductReviews, extractHashtagsFromProduct } = require('./youtube');
-const instagram = require('./instagram');
 const tiktok = require('./tiktok');
 
 // 상품별 최대 수집 개수
@@ -152,120 +151,6 @@ async function collectYouTubeReviews() {
 }
 
 /**
- * Instagram 리뷰 수집
- */
-async function collectInstagramReviews() {
-  if (!productsRef || !snsReviewsRef) {
-    console.error('❌ References not set. Call setReferences first.');
-    return { success: false, collected: 0 };
-  }
-
-  // Instagram API 연결 상태 확인
-  const connectionStatus = await instagram.checkConnection();
-  if (!connectionStatus.connected) {
-    console.log('\n📷 ========== Instagram API 미설정 ==========');
-    console.log(`⚠️ ${connectionStatus.message}`);
-    instagram.printSetupGuide();
-    return {
-      success: false,
-      collected: 0,
-      message: connectionStatus.message,
-      setupRequired: true
-    };
-  }
-
-  console.log('\n📷 ========== Instagram 리뷰 수집 시작 ==========');
-  console.log(`✅ 연결된 계정: @${connectionStatus.account.username}`);
-
-  const activeProducts = productsRef.filter(p => p.productSaleStatus === true);
-  console.log(`📦 활성 상품 수: ${activeProducts.length}`);
-
-  let totalCollectedCount = 0;
-
-  for (const product of activeProducts) {
-    let productCollectedCount = 0;
-
-    // 해시태그 추출
-    const hashtags = extractHashtagsFromProduct(product);
-    console.log(`\n🔍 상품 검색: ${product.productName}`);
-    if (hashtags.length > 0) {
-      console.log(`  📌 해시태그 사용: ${hashtags.map(t => '#' + t).join(', ')}`);
-    }
-
-    try {
-      const posts = await instagram.searchProductPosts(product, hashtags);
-
-      for (const post of posts) {
-        // 상품별 최대 수집 개수 체크
-        if (productCollectedCount >= MAX_REVIEWS_PER_PRODUCT) {
-          console.log(`  ⚠️ 상품별 최대 수집 개수(${MAX_REVIEWS_PER_PRODUCT})에 도달`);
-          break;
-        }
-
-        // 이미 수집된 게시물인지 확인
-        const exists = snsReviewsRef.some(
-          r => r.platform === 'INSTAGRAM' && r.externalId === post.postId
-        );
-
-        if (exists) {
-          console.log(`  ⏭️ 이미 수집됨: ${(post.caption || '').substring(0, 30)}...`);
-          continue;
-        }
-
-        // 매칭 점수 계산
-        const matchScore = instagram.calculateMatchScore(post, product, hashtags);
-
-        // 최소 점수 이상이면 수집 (20점 이상)
-        if (matchScore >= 20) {
-          const newReview = {
-            id: nextReviewId++,
-            platform: 'INSTAGRAM',
-            externalId: post.postId,
-            contentUrl: post.permalink,
-            thumbnailUrl: post.thumbnailUrl || post.mediaUrl,
-            title: `@${post.username}의 Instagram 게시물`,
-            description: post.caption || '',
-            authorName: post.username,
-            authorId: post.username,
-            publishedAt: post.timestamp,
-            viewCount: 0, // Instagram은 조회수 미제공
-            likeCount: post.likeCount || 0,
-            commentCount: post.commentsCount || 0,
-            mediaType: post.mediaType,
-            status: 'PENDING', // 수동 승인 대기
-            matchedProducts: [{ productCode: product.productCode, matchScore: matchScore }],
-            createdAt: new Date().toISOString()
-          };
-
-          snsReviewsRef.push(newReview);
-          productCollectedCount++;
-          totalCollectedCount++;
-
-          console.log(`  ✅ 수집 완료: @${post.username} (${matchScore}점)`);
-        } else {
-          console.log(`  ⏭️ 매칭 점수 낮음: @${post.username} (${matchScore}점)`);
-        }
-      }
-
-      // API 쿼터 보호를 위한 딜레이
-      await new Promise(resolve => setTimeout(resolve, 2000));
-
-    } catch (error) {
-      console.error(`  ❌ 에러: ${error.message}`);
-    }
-  }
-
-  console.log(`\n📷 ========== Instagram 수집 완료: ${totalCollectedCount}개 ==========\n`);
-
-  // 수집된 데이터를 파일에 저장
-  if (totalCollectedCount > 0 && saveCallback) {
-    saveCallback();
-  }
-
-  return { success: true, collected: totalCollectedCount };
-}
-
-/**
  * TikTok 리뷰 수집
  *
  * 참고: TikTok은 공개 해시태그 검색 API를 제공하지 않습니다.
@@ -296,7 +181,7 @@ async function collectTikTokReviews() {
  * 수동 수집 트리거 (API 엔드포인트용)
  */
 async function triggerCollection(platform = 'ALL') {
-  const results = { youtube: null, tiktok: null, instagram: null };
+  const results = { youtube: null, tiktok: null };
 
   if (platform === 'ALL' || platform === 'YOUTUBE') {
     results.youtube = await collectYouTubeReviews();
@@ -304,10 +189,6 @@ async function triggerCollection(platform = 'ALL') {
 
   if (platform === 'ALL' || platform === 'TIKTOK') {
     results.tiktok = await collectTikTokReviews();
-  }
-
-  if (platform === 'ALL' || platform === 'INSTAGRAM') {
-    results.instagram = await collectInstagramReviews();
   }
 
   return results;
@@ -323,7 +204,6 @@ function getCollectionStats() {
 
   const youtubeReviews = snsReviewsRef.filter(r => r.platform === 'YOUTUBE');
   const tiktokReviews = snsReviewsRef.filter(r => r.platform === 'TIKTOK');
-  const instagramReviews = snsReviewsRef.filter(r => r.platform === 'INSTAGRAM');
 
   return {
     total: snsReviewsRef.length,
@@ -338,12 +218,6 @@ function getCollectionStats() {
       pending: tiktokReviews.filter(r => r.status === 'PENDING').length,
       approved: tiktokReviews.filter(r => r.status === 'APPROVED').length,
       rejected: tiktokReviews.filter(r => r.status === 'REJECTED').length
-    },
-    instagram: {
-      total: instagramReviews.length,
-      pending: instagramReviews.filter(r => r.status === 'PENDING').length,
-      approved: instagramReviews.filter(r => r.status === 'APPROVED').length,
-      rejected: instagramReviews.filter(r => r.status === 'REJECTED').length
     }
   };
 }
@@ -352,7 +226,6 @@ module.exports = {
   setReferences,
   collectYouTubeReviews,
   collectTikTokReviews,
-  collectInstagramReviews,
   triggerCollection,
   getCollectionStats
 };
