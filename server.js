@@ -5414,8 +5414,10 @@ app.post('/datepalm-bay/mvp/google-login-oauth', (req, res) => {
     console.log(`Google OAuth user: ${payload.name} (${payload.email})`);
 
     let user = users.find(u => u.email === payload.email);
+    let isNewUser = false;
 
     if (!user) {
+      isNewUser = true;
       const newUser = {
         id: payload.email,
         password: '',
@@ -5435,11 +5437,12 @@ app.post('/datepalm-bay/mvp/google-login-oauth', (req, res) => {
       };
       users.push(newUser);
       user = newUser;
+      saveData();
       console.log(`New Google user registered: ${user.name}`);
     }
 
     const accessToken = `google-oauth-${user.code}-${Date.now()}`;
-    res.json({ accessToken, id: user.id, code: user.code, name: user.name, email: user.email, phone: user.phone, birthDate: user.birthDate || '', country: user.country || '', status: user.status });
+    res.json({ accessToken, id: user.id, code: user.code, name: user.name, email: user.email, phone: user.phone, birthDate: user.birthDate || '', country: user.country || '', status: user.status, isNewUser });
   } catch (e) {
     console.error('Google token decode error:', e.message);
     res.status(401).json({ message: 'Invalid Google token' });
