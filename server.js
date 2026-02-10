@@ -38,38 +38,52 @@ if (DATA_DIR !== __dirname && !fs.existsSync(DATA_FILE)) {
   }
 }
 
-// 데이터 로드 함수
+// 데이터 로드 함수 (모든 데이터 영속화)
 function loadData() {
   if (fs.existsSync(DATA_FILE)) {
     try {
       const fileContent = fs.readFileSync(DATA_FILE, 'utf-8');
       const data = JSON.parse(fileContent);
-      console.log(`📁 데이터 로드 완료: ${data.products?.length || 0}개 상품, ${data.snsReviews?.length || 0}개 SNS 리뷰, ${data.brands?.length || 0}개 브랜드`);
+      console.log(`📁 데이터 로드 완료: ${data.products?.length || 0}개 상품, ${data.snsReviews?.length || 0}개 SNS 리뷰, ${data.brands?.length || 0}개 브랜드, ${data.orders?.length || 0}개 주문, ${data.members?.length || 0}개 회원, ${data.coupons?.length || 0}개 쿠폰`);
       return {
         products: data.products || [],
         snsReviews: data.snsReviews || [],
-        brands: data.brands || []
+        brands: data.brands || [],
+        orders: data.orders || null,
+        members: data.members || null,
+        users: data.users || null,
+        userCoupons: data.userCoupons || null,
+        coupons: data.coupons || null,
+        groupBuyTeams: data.groupBuyTeams || [],
+        events: data.events || null,
       };
     } catch (e) {
       console.error('❌ 데이터 로드 실패:', e.message);
-      return { products: [], snsReviews: [], brands: [] };
+      return { products: [], snsReviews: [], brands: [], orders: null, members: null, users: null, userCoupons: null, coupons: null, groupBuyTeams: [], events: null };
     }
   }
   console.log('📁 저장된 데이터 없음, 빈 저장소로 시작');
-  return { products: [], snsReviews: [], brands: [] };
+  return { products: [], snsReviews: [], brands: [], orders: null, members: null, users: null, userCoupons: null, coupons: null, groupBuyTeams: [], events: null };
 }
 
-// 데이터 저장 함수
+// 데이터 저장 함수 (모든 데이터 영속화)
 function saveData() {
   try {
     const dataToSave = {
       products: products,
       snsReviews: snsReviews,
       brands: brands,
+      orders: customerOrders,
+      members: members,
+      users: users,
+      userCoupons: userCoupons,
+      coupons: coupons,
+      groupBuyTeams: groupBuyTeams,
+      events: events,
       savedAt: new Date().toISOString()
     };
     fs.writeFileSync(DATA_FILE, JSON.stringify(dataToSave, null, 2), 'utf-8');
-    console.log(`💾 데이터 저장 완료: ${products.length}개 상품, ${snsReviews.length}개 SNS 리뷰, ${brands.length}개 브랜드`);
+    console.log(`💾 데이터 저장 완료: ${products.length}개 상품, ${(customerOrders || []).length}개 주문, ${(members || []).length}개 회원`);
   } catch (e) {
     console.error('❌ 데이터 저장 실패:', e.message);
   }
@@ -286,8 +300,8 @@ const contacts = [
   }
 ];
 
-// Mock 회원 데이터 저장소
-const members = [
+// Mock 회원 데이터 저장소 (파일에서 로드, 없으면 기본 데이터)
+const members = loadedData.members || [
   {
     code: 'MEM-001',
     name: '김철수',
@@ -314,8 +328,8 @@ const members = [
   }
 ];
 
-// Mock 로그인 사용자 데이터 (id와 password 포함 + 쿠폰 자격 조건용 필드)
-const users = [
+// Mock 로그인 사용자 데이터 (파일에서 로드, 없으면 기본 데이터)
+const users = loadedData.users || [
   {
     id: 'test',
     password: 'test1234',
@@ -409,8 +423,8 @@ const users = [
   }
 ];
 
-// 유저별 다운로드한 쿠폰 저장소
-const userCoupons = [
+// 유저별 다운로드한 쿠폰 저장소 (파일에서 로드, 없으면 기본 데이터)
+const userCoupons = loadedData.userCoupons || [
   {
     id: 'UC-001',
     userId: 'USER-001',
@@ -1510,8 +1524,8 @@ app.get('/datepalm-bay/api/mvp/product/brand/list', (req, res) => {
 // Group Buy Team Endpoints
 // ======================================
 
-// Mock Group Buy Teams storage
-const groupBuyTeams = [];
+// Mock Group Buy Teams storage (파일에서 로드)
+const groupBuyTeams = loadedData.groupBuyTeams || [];
 
 // Helper function to generate invite code
 const generateInviteCode = () => {
@@ -1637,6 +1651,7 @@ app.post('/datepalm-bay/api/mvp/group-buy/teams', (req, res) => {
   groupBuyTeams.push(newTeam);
 
   console.log(`Team created: ${teamId}, Invite Code: ${inviteCode}`);
+  saveData();
 
   res.json({
     ok: true,
@@ -1790,6 +1805,7 @@ app.post('/datepalm-bay/api/mvp/group-buy/teams/:teamId/join', (req, res) => {
   }
 
   console.log(`User ${userId} joined team ${teamId}`);
+  saveData();
 
   res.json({
     ok: true,
@@ -1856,6 +1872,7 @@ app.post('/datepalm-bay/api/mvp/group-buy/teams/:teamId/checkout', (req, res) =>
   const paymentCode = `PAY-GB-${Date.now()}`;
 
   console.log(`Creating GROUP_BUY order: ${orderCode} for team ${teamId}`);
+  saveData();
 
   res.json({
     ok: true,
@@ -2220,6 +2237,7 @@ app.post('/datepalm-bay/api/mvp/member/create', (req, res) => {
   members.push(newMember);
 
   console.log(`✅ New member created: ${name} (${email})`);
+  saveData();
 
   res.json({
     ok: true,
@@ -2274,15 +2292,16 @@ app.patch('/datepalm-bay/api/mvp/member/edit/change-password', (req, res) => {
   }
 
   user.password = newPassword;
+  saveData();
   console.log(`✅ Password changed for ${email}`);
 
   res.json({ ok: true, data: 'success', message: 'Password changed successfully' });
 });
 
 // ======================================
-// Mock Events Data
+// Mock Events Data (파일에서 로드, 없으면 기본 데이터)
 // ======================================
-const events = [
+const events = loadedData.events || [
   {
     code: 'EVT-001',
     title: 'New Year Sale 2025',
@@ -2334,9 +2353,9 @@ const events = [
 ];
 
 // ======================================
-// Mock Coupons Data (확장: 대상 조건 + 쿠폰 유형)
+// Mock Coupons Data (파일에서 로드, 없으면 기본 데이터)
 // ======================================
-const coupons = [
+const coupons = loadedData.coupons || [
   {
     code: 'CPN-WELCOME15',
     name: '15% Welcome Coupon',
@@ -3025,6 +3044,7 @@ app.post('/datepalm-bay/api/admin/event/create', upload.fields([
   events.push(newEvent);
 
   console.log(`Event created: ${code}`);
+  saveData();
 
   res.json({
     ok: true,
@@ -3092,6 +3112,7 @@ app.put('/datepalm-bay/api/admin/event/edit', upload.fields([
   };
 
   console.log(`Event updated: ${requestData.code}`);
+  saveData();
 
   res.json({
     ok: true,
@@ -3118,6 +3139,7 @@ app.delete('/datepalm-bay/api/admin/event/delete/:code', (req, res) => {
   events.splice(eventIndex, 1);
 
   console.log(`Event deleted: ${code}`);
+  saveData();
 
   res.json({
     ok: true,
@@ -3574,8 +3596,8 @@ function extractYouTubeVideoId(url) {
 // 결제 API
 // ========================================
 
-// 주문 목록 저장소 (메모리) - 시드 데이터 포함
-let customerOrders = [
+// 주문 목록 저장소 (파일에서 로드, 없으면 시드 데이터)
+let customerOrders = loadedData.orders || [
   {
     orderId: 'ORDER-TEST-FEDEX-001',
     productCode: products[0]?.productCode || 'PROD-TEST',
@@ -3835,6 +3857,7 @@ app.post('/datepalm-bay/api/mvp/order/create', async (req, res) => {
   };
 
   customerOrders.push(newOrder);
+  saveData();
 
   console.log(`✅ 주문 생성 완료: ${orderId}`);
   console.log(`  상품: ${orderName}`);
@@ -3925,6 +3948,7 @@ app.post('/datepalm-bay/api/mvp/paypal/capture-order', async (req, res) => {
     order.paymentMethod = 'PAYPAL';
     order.captureId = captureResult.purchase_units?.[0]?.payments?.captures?.[0]?.id;
     order.approvedAt = new Date().toISOString();
+    saveData();
 
     console.log(`✅ PayPal 결제 완료: ${order.orderId}`);
 
@@ -4031,6 +4055,7 @@ app.post('/datepalm-bay/api/mvp/payment/refund', async (req, res) => {
     });
 
     order.status = 'REFUNDED';
+    saveData();
 
     console.log(`✅ 환불 완료: ${paymentCode}`);
 
@@ -4297,6 +4322,7 @@ app.post('/datepalm-bay/api/admin/coupon/create', express.json(), (req, res) => 
   coupons.push(newCoupon);
 
   console.log(`Coupon created: ${code}`);
+  saveData();
 
   res.json({
     ok: true,
@@ -4338,6 +4364,7 @@ app.put('/datepalm-bay/api/admin/coupon/edit', express.json(), (req, res) => {
   };
 
   console.log(`Coupon updated: ${requestData.code}`);
+  saveData();
 
   res.json({
     ok: true,
@@ -4364,6 +4391,7 @@ app.delete('/datepalm-bay/api/admin/coupon/delete/:code', (req, res) => {
   coupons.splice(couponIndex, 1);
 
   console.log(`Coupon deleted: ${code}`);
+  saveData();
 
   res.json({
     ok: true,
@@ -4652,6 +4680,7 @@ app.post('/datepalm-bay/api/mvp/coupons/download/:code', (req, res) => {
   userCoupons.push(newUserCoupon);
 
   console.log(`Coupon ${code} downloaded by user ${user.name}`);
+  saveData();
 
   res.json({
     ok: true,
@@ -4878,6 +4907,7 @@ app.post('/datepalm-bay/api/mvp/coupons/use/:code', (req, res) => {
   }
 
   console.log(`Coupon ${code} used by user ${user.name}, discount: $${discountAmount}`);
+  saveData();
 
   res.json({
     ok: true,
@@ -4999,6 +5029,8 @@ app.post('/datepalm-bay/api/admin/fedex/create-shipment', async (req, res) => {
     order.fedexShippedAt = new Date().toISOString();
     order.courier = 'FEDEX';
     order.status = 'DELIVERY';
+
+    saveData();
 
     console.log(`✅ FedEx 배송 생성 완료`);
     console.log(`  트래킹 번호: ${result.trackingNumber}`);
@@ -5166,6 +5198,7 @@ app.post('/datepalm-bay/api/admin/fedex/schedule-pickup', async (req, res) => {
       order.fedexPickupConfirmation = result.pickupConfirmationCode;
       order.fedexPickupDate = readyDate;
       order.fedexPickupTime = `${readyTime} ~ ${closeTime}`;
+      saveData();
     }
 
     res.json({ ok: true, data: result, message: 'Pickup scheduled successfully' });
@@ -5194,6 +5227,7 @@ app.put('/datepalm-bay/api/admin/fedex/cancel-pickup', async (req, res) => {
         order.fedexPickupConfirmation = null;
         order.fedexPickupDate = null;
         order.fedexPickupTime = null;
+        saveData();
       }
     }
 

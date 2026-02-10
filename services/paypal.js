@@ -6,11 +6,7 @@
 // Node.js < 18 fetch polyfill
 const nodeFetch = typeof globalThis.fetch === 'function' ? globalThis.fetch : require('node-fetch');
 
-// Sandbox defaults (development mock server only)
-const SANDBOX_CLIENT_ID = 'Ac7DmyOag05FDBBBPBt9qytCheK3Sg8n9k7C8fwqcbkAkqaujgZFaC7j8unqx6vXwyeBWIXvVTNypYJi';
-const SANDBOX_CLIENT_SECRET = 'ENNVrE6wFMBcb5EOSbxTHaBDLAP51C778WAhxd-jgGgU54KhOmVuWcV2E4i5i-37TW7h0hkYF7USFuta';
-
-const PAYPAL_MODE = process.env.PAYPAL_MODE || 'sandbox';
+const PAYPAL_MODE = process.env.PAYPAL_MODE || 'production';
 const PAYPAL_API_BASE = PAYPAL_MODE === 'sandbox'
   ? 'https://api-m.sandbox.paypal.com'
   : 'https://api-m.paypal.com';
@@ -19,8 +15,8 @@ const PAYPAL_API_BASE = PAYPAL_MODE === 'sandbox'
  * Get PayPal access token
  */
 async function getAccessToken() {
-  const clientId = process.env.PAYPAL_CLIENT_ID || SANDBOX_CLIENT_ID;
-  const clientSecret = process.env.PAYPAL_CLIENT_SECRET || SANDBOX_CLIENT_SECRET;
+  const clientId = process.env.PAYPAL_CLIENT_ID;
+  const clientSecret = process.env.PAYPAL_CLIENT_SECRET;
 
   console.log('\n=== [PayPal] Authentication Debug ===');
   console.log('PAYPAL_MODE:', PAYPAL_MODE);
@@ -29,7 +25,7 @@ async function getAccessToken() {
   console.log('Client Secret loaded:', clientSecret ? `${clientSecret.substring(0, 10)}...` : 'NOT SET');
 
   if (!clientId || !clientSecret) {
-    throw new Error('PayPal credentials not configured');
+    throw new Error('PayPal credentials not configured. Set PAYPAL_CLIENT_ID and PAYPAL_CLIENT_SECRET environment variables.');
   }
 
   const auth = Buffer.from(`${clientId}:${clientSecret}`).toString('base64');

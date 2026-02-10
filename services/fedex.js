@@ -3,7 +3,11 @@
  * https://developer.fedex.com/api/en-us/home.html
  */
 
-const FEDEX_API_BASE = process.env.FEDEX_MODE === 'production'
+// Node.js < 18 fetch polyfill
+const nodeFetch = typeof globalThis.fetch === 'function' ? globalThis.fetch : require('node-fetch');
+
+const FEDEX_MODE = process.env.FEDEX_MODE || 'production';
+const FEDEX_API_BASE = FEDEX_MODE === 'production'
   ? 'https://apis.fedex.com'
   : 'https://apis-sandbox.fedex.com';
 
@@ -37,7 +41,7 @@ async function getAccessToken(project = 'default') {
       throw new Error('FedEx Track credentials not configured. Set FEDEX_TRACK_API_KEY and FEDEX_TRACK_SECRET_KEY.');
     }
 
-    const response = await fetch(`${FEDEX_API_BASE}/oauth/token`, {
+    const response = await nodeFetch(`${FEDEX_API_BASE}/oauth/token`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
       body: new URLSearchParams({
@@ -79,7 +83,7 @@ async function getAccessToken(project = 'default') {
     throw new Error('FedEx credentials not configured. Set FEDEX_API_KEY and FEDEX_SECRET_KEY.');
   }
 
-  const response = await fetch(`${FEDEX_API_BASE}/oauth/token`, {
+  const response = await nodeFetch(`${FEDEX_API_BASE}/oauth/token`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
     body: new URLSearchParams({
@@ -171,7 +175,7 @@ async function getRates({ recipient, packages, serviceType }) {
   console.log('To:', recipient.countryCode, recipient.postalCode);
   console.log('Packages:', packages.length);
 
-  const response = await fetch(`${FEDEX_API_BASE}/rate/v1/rates/quotes`, {
+  const response = await nodeFetch(`${FEDEX_API_BASE}/rate/v1/rates/quotes`, {
     method: 'POST',
     headers: {
       'Authorization': `Bearer ${accessToken}`,
@@ -255,7 +259,7 @@ async function createShipment({ recipient, packages, serviceType, labelFormat = 
   console.log('To:', recipient.address?.countryCode, recipient.address?.postalCode);
   console.log('Packages:', packages.length);
 
-  const response = await fetch(`${FEDEX_API_BASE}/ship/v1/shipments`, {
+  const response = await nodeFetch(`${FEDEX_API_BASE}/ship/v1/shipments`, {
     method: 'POST',
     headers: {
       'Authorization': `Bearer ${accessToken}`,
@@ -306,7 +310,7 @@ async function trackShipment(trackingNumbers) {
   console.log('\n=== [FedEx] Tracking Shipment ===');
   console.log('Tracking numbers:', numbers.join(', '));
 
-  const response = await fetch(`${FEDEX_API_BASE}/track/v1/trackingnumbers`, {
+  const response = await nodeFetch(`${FEDEX_API_BASE}/track/v1/trackingnumbers`, {
     method: 'POST',
     headers: {
       'Authorization': `Bearer ${accessToken}`,
@@ -371,7 +375,7 @@ async function validateAddress(address) {
   console.log('\n=== [FedEx] Validating Address ===');
   console.log('Address:', address.city, address.countryCode);
 
-  const response = await fetch(`${FEDEX_API_BASE}/address/v1/addresses/resolve`, {
+  const response = await nodeFetch(`${FEDEX_API_BASE}/address/v1/addresses/resolve`, {
     method: 'POST',
     headers: {
       'Authorization': `Bearer ${accessToken}`,
@@ -455,7 +459,7 @@ async function schedulePickup({ pickupAddress, pickupContact, readyDate, readyTi
   console.log('Ready:', readyTime, '~ Close:', closeTime);
   console.log('Packages:', packageCount, 'Weight:', totalWeight, 'kg');
 
-  const response = await fetch(`${FEDEX_API_BASE}/pickup/v1/pickups`, {
+  const response = await nodeFetch(`${FEDEX_API_BASE}/pickup/v1/pickups`, {
     method: 'POST',
     headers: {
       'Authorization': `Bearer ${accessToken}`,
@@ -501,7 +505,7 @@ async function cancelPickup(pickupConfirmationCode, scheduledDate) {
   console.log('\n=== [FedEx] Cancelling Pickup ===');
   console.log('Confirmation:', pickupConfirmationCode);
 
-  const response = await fetch(`${FEDEX_API_BASE}/pickup/v1/pickups/cancel`, {
+  const response = await nodeFetch(`${FEDEX_API_BASE}/pickup/v1/pickups/cancel`, {
     method: 'PUT',
     headers: {
       'Authorization': `Bearer ${accessToken}`,
@@ -572,7 +576,7 @@ async function retrieveRegulatoryDocuments({ originAddress, destinationAddress, 
   console.log('Destination:', destinationAddress.countryCode, destinationAddress.postalCode);
   console.log('Carrier:', carrierCode);
 
-  const response = await fetch(`${FEDEX_API_BASE}/globaltrade/v1/shipments/regulatorydetails/retrieve`, {
+  const response = await nodeFetch(`${FEDEX_API_BASE}/globaltrade/v1/shipments/regulatorydetails/retrieve`, {
     method: 'POST',
     headers: {
       'Authorization': `Bearer ${accessToken}`,
@@ -674,7 +678,7 @@ async function uploadTradeDocuments({ workflowName = 'ETDPreshipment', carrierCo
 
     console.log(`  Uploading: ${fileName} (${doc.shipDocumentType || 'COMMERCIAL_INVOICE'})`);
 
-    const response = await fetch(`${docApiBase}/documents/v1/etds/upload`, {
+    const response = await nodeFetch(`${docApiBase}/documents/v1/etds/upload`, {
       method: 'POST',
       headers: {
         'Authorization': `Bearer ${accessToken}`,
