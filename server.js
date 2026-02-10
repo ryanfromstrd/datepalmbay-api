@@ -60,6 +60,19 @@ function saveData() {
 const app = express();
 const port = 8080;
 
+// Railway 등 리버스 프록시 환경에서 req.protocol이 https를 반환하도록 설정
+app.set('trust proxy', true);
+
+// 이미지 URL 생성 시 사용할 base URL 헬퍼
+function getBaseUrl(req) {
+  if (process.env.API_BASE_URL) {
+    return process.env.API_BASE_URL.replace(/\/$/, '');
+  }
+  const protocol = req.protocol;
+  const host = req.get('host');
+  return `${protocol}://${host}`;
+}
+
 // 업로드 폴더 생성
 const uploadDir = path.join(__dirname, 'uploads');
 if (!fs.existsSync(uploadDir)) {
@@ -520,9 +533,10 @@ app.post('/datepalm-bay/api/admin/product/create', upload.fields([
 
     // 이미지 구조 생성 (mainImages, detailImages)
     // 실제 업로드된 파일의 URL 사용
+    const baseUrl = getBaseUrl(req);
     const mainImages = mainImageFiles.map((file, index) => ({
       code: `${productCode}-M${index + 1}`,
-      url: `http://localhost:${port}/uploads/${file.filename}`,
+      url: `${baseUrl}/uploads/${file.filename}`,
       originalName: file.originalname,
       size: file.size,
       mimetype: file.mimetype,
@@ -531,7 +545,7 @@ app.post('/datepalm-bay/api/admin/product/create', upload.fields([
 
     const detailImages = detailImageFiles.map((file, index) => ({
       code: `${productCode}-D${index + 1}`,
-      url: `http://localhost:${port}/uploads/${file.filename}`,
+      url: `${baseUrl}/uploads/${file.filename}`,
       originalName: file.originalname,
       size: file.size,
       mimetype: file.mimetype,
@@ -659,9 +673,10 @@ app.put('/datepalm-bay/api/admin/product/edit', upload.fields([
 
     // 새로운 mainImages 추가
     const mainImageFiles = req.files.mainImages || [];
+    const baseUrl = getBaseUrl(req);
     const newMainImages = mainImageFiles.map((file, index) => ({
       code: `${requestData.code}-M${existingMainImages.length + index + 1}`,
-      url: `http://localhost:${port}/uploads/${file.filename}`,
+      url: `${baseUrl}/uploads/${file.filename}`,
       originalName: file.originalname,
       size: file.size,
       mimetype: file.mimetype,
@@ -672,7 +687,7 @@ app.put('/datepalm-bay/api/admin/product/edit', upload.fields([
     const detailImageFiles = req.files.detailImages || [];
     const newDetailImages = detailImageFiles.map((file, index) => ({
       code: `${requestData.code}-D${existingDetailImages.length + index + 1}`,
-      url: `http://localhost:${port}/uploads/${file.filename}`,
+      url: `${baseUrl}/uploads/${file.filename}`,
       originalName: file.originalname,
       size: file.size,
       mimetype: file.mimetype,
@@ -2939,13 +2954,14 @@ app.post('/datepalm-bay/api/admin/event/create', upload.fields([
 
   const bannerFiles = req.files?.bannerImage;
   const thumbnailFiles = req.files?.thumbnailImage;
+  const eventBaseUrl = getBaseUrl(req);
 
   const bannerImage = bannerFiles?.[0]
-    ? `http://localhost:8080/uploads/${bannerFiles[0].filename}`
+    ? `${eventBaseUrl}/uploads/${bannerFiles[0].filename}`
     : 'https://via.placeholder.com/1200x400?text=Event+Banner';
 
   const thumbnailImage = thumbnailFiles?.[0]
-    ? `http://localhost:8080/uploads/${thumbnailFiles[0].filename}`
+    ? `${eventBaseUrl}/uploads/${thumbnailFiles[0].filename}`
     : 'https://via.placeholder.com/400x300?text=Event+Thumbnail';
 
   const newEvent = {
@@ -3009,13 +3025,14 @@ app.put('/datepalm-bay/api/admin/event/edit', upload.fields([
 
   const bannerFiles = req.files?.bannerImage;
   const thumbnailFiles = req.files?.thumbnailImage;
+  const editBaseUrl = getBaseUrl(req);
 
   const bannerImage = bannerFiles?.[0]
-    ? `http://localhost:8080/uploads/${bannerFiles[0].filename}`
+    ? `${editBaseUrl}/uploads/${bannerFiles[0].filename}`
     : existingEvent.bannerImage;
 
   const thumbnailImage = thumbnailFiles?.[0]
-    ? `http://localhost:8080/uploads/${thumbnailFiles[0].filename}`
+    ? `${editBaseUrl}/uploads/${thumbnailFiles[0].filename}`
     : existingEvent.thumbnailImage;
 
   events[eventIndex] = {
