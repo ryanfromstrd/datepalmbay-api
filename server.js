@@ -607,6 +607,7 @@ app.post('/datepalm-bay/api/admin/product/create', upload.fields([
         detailImages: detailImages
       },
       groupBuyTiers: requestData.groupBuyTiers || [],
+      productOptions: requestData.productOptions || [],
       // 배송비 관련 필드
       shippingCostType: requestData.shippingCostType || 'FREE',
       shippingCost: requestData.shippingCost || 0,
@@ -771,6 +772,7 @@ app.put('/datepalm-bay/api/admin/product/edit', upload.fields([
         detailImages: finalDetailImages
       },
       groupBuyTiers: requestData.groupBuyTiers || [],
+      productOptions: requestData.productOptions || [],
       // 배송비 관련 필드
       shippingCostType: requestData.shippingCostType || 'FREE',
       shippingCost: requestData.shippingCost || 0,
@@ -1017,6 +1019,7 @@ app.get('/datepalm-bay/api/admin/product/detail/:code', (req, res) => {
     })),
     detailInfo: product.detailInfo || '',
     groupBuyTiers: product.groupBuyTiers || [],
+    productOptions: product.productOptions || [],
     // 배송비 관련 필드
     shippingCostType: product.shippingCostType || 'FREE',
     shippingCost: product.shippingCost || 0,
@@ -1391,6 +1394,7 @@ app.get('/datepalm-bay/api/mvp/product/normal/detail/:code', (req, res) => {
     exchangePolicy: product.policy?.exchangePolicy || '',
     canReviewWrite: false,
     groupBuyTiers: product.groupBuyTiers || [],
+    productOptions: product.productOptions || [],
     // 배송비 관련 필드 (상위 레벨 또는 policy 객체에서 가져옴)
     shippingCostType: product.shippingCostType || product.policy?.shippingCostType || 'FREE',
     shippingCost: product.shippingCost ?? product.policy?.shippingCost ?? 0,
@@ -3722,7 +3726,8 @@ app.post('/datepalm-bay/api/mvp/order/create', async (req, res) => {
     totalAmount,
     shippingCost,
     couponCode,
-    couponDiscount
+    couponDiscount,
+    selectedOptions
   } = orderData;
 
   // 주문 ID 생성
@@ -3808,6 +3813,7 @@ app.post('/datepalm-bay/api/mvp/order/create', async (req, res) => {
     bundleItems: isBundleOrder ? bundleItems : null,
     couponCode: couponCode || null,
     couponDiscount: couponDiscount || 0,
+    selectedOptions: selectedOptions || [],
     shippingCost: shippingCost || 0,
     status: 'PENDING',
     paypalOrderId: null,
