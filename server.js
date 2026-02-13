@@ -16,6 +16,11 @@ const paypalService = require('./services/paypal');
 const fedexService = require('./services/fedex');
 // MySQL Database 서비스
 const database = require('./services/database');
+// Twilio SMS 서비스
+const twilioClient = process.env.TWILIO_ACCOUNT_SID && process.env.TWILIO_AUTH_TOKEN
+  ? require('twilio')(process.env.TWILIO_ACCOUNT_SID, process.env.TWILIO_AUTH_TOKEN)
+  : null;
+const TWILIO_PHONE_FROM = process.env.TWILIO_PHONE_FROM || '';
 let _useMySQL = false;
 let _saveTimer = null;
 
@@ -2167,7 +2172,7 @@ app.post('/datepalm-bay/mvp/google-login', (req, res) => {
 // ======================================
 const smsVerifications = {};
 
-app.post('/datepalm-bay/api/mvp/member/sms/send', (req, res) => {
+app.post('/datepalm-bay/api/mvp/member/sms/send', async (req, res) => {
   console.log('\n=== [SMS] Send Verification Code ===');
   const { phone, countryCode } = req.body;
 
@@ -2177,11 +2182,29 @@ app.post('/datepalm-bay/api/mvp/member/sms/send', (req, res) => {
 
   const code = String(Math.floor(100000 + Math.random() * 900000));
   const requestId = `sms-${Date.now()}`;
+  const fullPhone = `${countryCode || ''}${phone}`;
 
-  smsVerifications[requestId] = { code, phone: `${countryCode || ''}${phone}`, createdAt: Date.now() };
+  smsVerifications[requestId] = { code, phone: fullPhone, createdAt: Date.now() };
 
   console.log(`📱 SMS Code for ${countryCode} ${phone}: ${code}`);
   console.log(`   Request ID: ${requestId}`);
+
+  // Twilio로 실제 SMS 발송
+  if (twilioClient && TWILIO_PHONE_FROM) {
+    try {
+      await twilioClient.messages.create({
+        body: `[DatepalmBay] Your verification code is: ${code}`,
+        from: TWILIO_PHONE_FROM,
+        to: fullPhone,
+      });
+      console.log(`✅ SMS sent via Twilio to ${fullPhone}`);
+    } catch (err) {
+      console.error(`❌ Twilio SMS failed:`, err.message);
+      return res.json({ ok: false, data: null, message: 'Failed to send SMS. Please try again.' });
+    }
+  } else {
+    console.log('⚠️  Twilio not configured - code only logged to console');
+  }
 
   res.json({ ok: true, data: requestId, message: 'SMS verification code sent' });
 });
