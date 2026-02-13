@@ -3693,129 +3693,8 @@ function extractYouTubeVideoId(url) {
 // 결제 API
 // ========================================
 
-// 주문 목록 저장소 (기본 시드 데이터, startServer()에서 덮어씀)
-let customerOrders = [
-  {
-    orderId: 'ORDER-TEST-FEDEX-001',
-    productCode: products[0]?.productCode || 'PROD-TEST',
-    productName: products[0]?.productNameEn || 'Premium Medjool Dates - Gift Box',
-    quantity: 2,
-    amount: 89.99,
-    currency: 'USD',
-    orderType: 'NORMAL',
-    teamId: null,
-    ordererName: 'John Smith',
-    ordererContact: '+1-555-0123',
-    ordererEmail: 'john@example.com',
-    recipientName: 'Jane Doe',
-    recipientContact: '+1-555-0456',
-    postalCode: '90210',
-    address: '123 Palm Avenue',
-    detailAddress: 'Suite 100',
-    deliveryMemo: 'Leave at front door',
-    isBundleOrder: false,
-    bundleItems: null,
-    couponCode: null,
-    couponDiscount: 0,
-    shippingCost: 15.00,
-    status: 'DELIVERY',
-    paypalOrderId: 'PAYPAL-TEST-001',
-    captureId: 'CAPTURE-TEST-001',
-    paymentMethod: 'PAYPAL',
-    approvedAt: new Date('2026-02-01T14:30:00Z').toISOString(),
-    courier: 'FEDEX',
-    fedexTrackingNumber: '794644790138',
-    fedexServiceType: 'FEDEX_INTERNATIONAL_PRIORITY',
-    fedexEstimatedDelivery: new Date('2026-02-15T18:00:00Z').toISOString(),
-    fedexShippedAt: new Date('2026-02-02T09:00:00Z').toISOString(),
-    fedexLabelBase64: null,
-    fedexPickupConfirmation: null,
-    fedexPickupDate: null,
-    fedexPickupTime: null,
-    fedexTradeDocuments: [],
-    createdAt: new Date('2026-02-01T14:00:00Z').toISOString(),
-  },
-  {
-    orderId: 'ORDER-TEST-002',
-    productCode: products[0]?.productCode || 'PROD-TEST',
-    productName: products[0]?.productNameEn || 'Ajwa Dates - Premium Pack',
-    quantity: 1,
-    amount: 45.00,
-    currency: 'USD',
-    orderType: 'NORMAL',
-    teamId: null,
-    ordererName: 'John Smith',
-    ordererContact: '+1-555-0123',
-    ordererEmail: 'john@example.com',
-    recipientName: 'John Smith',
-    recipientContact: '+1-555-0123',
-    postalCode: '10001',
-    address: '456 Date Street',
-    detailAddress: 'Apt 7B',
-    deliveryMemo: '',
-    isBundleOrder: false,
-    bundleItems: null,
-    couponCode: null,
-    couponDiscount: 0,
-    shippingCost: 10.00,
-    status: 'SUCCESS',
-    paypalOrderId: 'PAYPAL-TEST-002',
-    captureId: 'CAPTURE-TEST-002',
-    paymentMethod: 'PAYPAL',
-    approvedAt: new Date('2026-02-05T10:00:00Z').toISOString(),
-    courier: null,
-    fedexTrackingNumber: null,
-    fedexServiceType: null,
-    fedexEstimatedDelivery: null,
-    fedexShippedAt: null,
-    fedexLabelBase64: null,
-    fedexPickupConfirmation: null,
-    fedexPickupDate: null,
-    fedexPickupTime: null,
-    fedexTradeDocuments: [],
-    createdAt: new Date('2026-02-05T09:30:00Z').toISOString(),
-  },
-  {
-    orderId: 'ORDER-TEST-FEDEX-003',
-    productCode: products[1]?.productCode || products[0]?.productCode || 'PROD-TEST',
-    productName: products[1]?.productNameEn || 'Ajwa Dates - Premium Pack',
-    quantity: 3,
-    amount: 129.99,
-    currency: 'USD',
-    orderType: 'NORMAL',
-    teamId: null,
-    ordererName: 'John Smith',
-    ordererContact: '+1-555-0123',
-    ordererEmail: 'john@example.com',
-    recipientName: 'Michael Brown',
-    recipientContact: '+1-555-0789',
-    postalCode: '30301',
-    address: '789 Peachtree Road NE',
-    detailAddress: 'Unit 12',
-    deliveryMemo: 'Ring doorbell',
-    isBundleOrder: false,
-    bundleItems: null,
-    couponCode: null,
-    couponDiscount: 0,
-    shippingCost: 12.00,
-    status: 'DELIVERED',
-    paypalOrderId: 'PAYPAL-TEST-003',
-    captureId: 'CAPTURE-TEST-003',
-    paymentMethod: 'PAYPAL',
-    approvedAt: new Date('2026-01-20T11:00:00Z').toISOString(),
-    courier: 'FEDEX',
-    fedexTrackingNumber: '794644790138',
-    fedexServiceType: 'FEDEX_INTERNATIONAL_ECONOMY',
-    fedexEstimatedDelivery: new Date('2026-01-28T18:00:00Z').toISOString(),
-    fedexShippedAt: new Date('2026-01-21T08:00:00Z').toISOString(),
-    fedexLabelBase64: null,
-    fedexPickupConfirmation: null,
-    fedexPickupDate: null,
-    fedexPickupTime: null,
-    fedexTradeDocuments: [],
-    createdAt: new Date('2026-01-20T10:30:00Z').toISOString(),
-  }
-];
+// 주문 목록 저장소 (startServer()에서 MySQL/JSON으로부터 로드)
+let customerOrders = [];
 
 // 주문 생성 API (주문 정보만 저장, PayPal 결제는 별도)
 app.post('/datepalm-bay/api/mvp/order/create', async (req, res) => {
@@ -5611,7 +5490,17 @@ async function startServer() {
   if (loadedData.snsReviews && loadedData.snsReviews.length > 0) snsReviews = loadedData.snsReviews;
   if (loadedData.orders) customerOrders = loadedData.orders;
 
-  // 4. SNS 수집기에 로드된 데이터 참조 재설정
+  // 4. 더미/테스트 주문 데이터 정리
+  const testOrderIds = ['ORDER-TEST-FEDEX-001', 'ORDER-TEST-002', 'ORDER-TEST-FEDEX-003'];
+  const beforeCount = customerOrders.length;
+  customerOrders = customerOrders.filter(o => !testOrderIds.includes(o.orderId));
+  if (customerOrders.length < beforeCount) {
+    console.log(`🧹 더미 주문 ${beforeCount - customerOrders.length}개 삭제`);
+    // 즉시 저장 (debounce 무시)
+    await _saveDataImpl();
+  }
+
+  // 5. SNS 수집기에 로드된 데이터 참조 재설정
   snsCollector.setReferences(snsReviews, products, saveData);
 
   console.log(`\n📊 데이터 로드 완료: ${products.length}개 상품, ${brands.length}개 브랜드, ${(customerOrders || []).length}개 주문, ${(members || []).length}개 회원`);
