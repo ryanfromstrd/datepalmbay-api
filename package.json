@@ -1,7 +1,7 @@
 {
-  "name": "mock-api-server",
+  "name": "datepalmbay-api",
   "version": "1.0.0",
-  "description": "Mock API Server for DatepalmBay Admin",
+  "description": "DatepalmBay Official API Server",
   "main": "server.js",
   "scripts": {
     "start": "node server.js"
