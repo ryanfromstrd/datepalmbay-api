@@ -3530,6 +3530,49 @@ app.put('/datepalm-bay/api/admin/sns-reviews/approve-all', (req, res) => {
   });
 });
 
+// 어드민: 선택한 리뷰 벌크 액션 (승인/거절/삭제)
+app.put('/datepalm-bay/api/admin/sns-reviews/bulk-action', (req, res) => {
+  const { ids, action } = req.body;
+
+  console.log(`📱 Bulk action: ${action} for ${ids?.length || 0} reviews`);
+
+  if (!ids || !Array.isArray(ids) || ids.length === 0) {
+    return res.status(400).json({ ok: false, message: 'ids array is required' });
+  }
+
+  if (!['APPROVED', 'REJECTED', 'DELETE'].includes(action)) {
+    return res.status(400).json({ ok: false, message: 'action must be APPROVED, REJECTED, or DELETE' });
+  }
+
+  let processedCount = 0;
+
+  if (action === 'DELETE') {
+    const beforeCount = snsReviews.length;
+    snsReviews = snsReviews.filter(r => !ids.includes(r.id));
+    processedCount = beforeCount - snsReviews.length;
+  } else {
+    snsReviews.forEach(review => {
+      if (ids.includes(review.id)) {
+        review.status = action;
+        processedCount++;
+      }
+    });
+  }
+
+  if (processedCount > 0) {
+    saveData();
+  }
+
+  const actionLabel = action === 'DELETE' ? 'deleted' : action === 'APPROVED' ? 'approved' : 'rejected';
+  console.log(`✅ ${processedCount} reviews ${actionLabel}`);
+
+  res.json({
+    ok: true,
+    data: { processedCount },
+    message: `${processedCount} reviews ${actionLabel} successfully`
+  });
+});
+
 // 어드민: URL로 SNS 리뷰 수동 추가
 app.post('/datepalm-bay/api/admin/sns-reviews/manual', async (req, res) => {
   const { url, productCode } = req.body;
