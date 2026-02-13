@@ -3666,15 +3666,30 @@ app.post('/datepalm-bay/api/admin/sns-reviews/manual', async (req, res) => {
       });
     }
 
-    // 중복 체크
-    const exists = snsReviews.some(
+    // 중복 체크 → 중복이면 기존 리뷰 업데이트 (제목/썸네일 등 갱신)
+    const existingIdx = snsReviews.findIndex(
       r => r.platform === reviewData.platform && r.externalId === reviewData.externalId
     );
 
-    if (exists) {
-      return res.status(400).json({
-        ok: false,
-        message: 'This review already exists'
+    if (existingIdx >= 0) {
+      const existing = snsReviews[existingIdx];
+      // 기존 리뷰의 제목/썸네일/작성자 등을 최신 데이터로 업데이트
+      if (reviewData.title && reviewData.title !== 'YouTube Video' && reviewData.title !== 'TikTok Video') {
+        existing.title = reviewData.title;
+      }
+      if (reviewData.thumbnailUrl) existing.thumbnailUrl = reviewData.thumbnailUrl;
+      if (reviewData.authorName && reviewData.authorName !== 'Unknown') existing.authorName = reviewData.authorName;
+      if (reviewData.description) existing.description = reviewData.description;
+      // 상품 매칭 추가 (이미 없는 경우만)
+      if (!existing.matchedProducts.some(m => m.productCode === productCode)) {
+        existing.matchedProducts.push({ productCode, matchScore: 100 });
+      }
+      saveData();
+      console.log(`🔄 Existing review updated: ${existing.id} (${existing.title})`);
+      return res.json({
+        ok: true,
+        data: existing,
+        message: 'Review updated with latest info'
       });
     }
 
