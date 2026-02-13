@@ -199,37 +199,48 @@ function generateHashtagSearchQueries(hashtags, productName) {
   const queries = [];
 
   if (hashtags.length > 0) {
-    // 1차: 모든 해시태그 조합 (AND 조건 효과)
-    if (hashtags.length >= 2) {
-      queries.push(hashtags.join(' ') + ' review');
-      queries.push(hashtags.join(' ') + ' 리뷰');
-    }
-
-    // 2차: 2개씩 조합
-    if (hashtags.length >= 3) {
-      for (let i = 0; i < Math.min(hashtags.length, 3); i++) {
-        for (let j = i + 1; j < Math.min(hashtags.length, 4); j++) {
-          queries.push(`${hashtags[i]} ${hashtags[j]} review`);
-        }
+    // 교집합 큰 순서대로: 전체 → (n-1)개 조합 → ... → 2개 조합 → 개별
+    // 예: [meebak, cica, cream]
+    //   1순위: meebak cica cream (전체)
+    //   2순위: meebak cica, meebak cream, cica cream (2개씩)
+    //   3순위: meebak, cica, cream (개별)
+    for (let size = hashtags.length; size >= 1; size--) {
+      const combos = getCombinations(hashtags, size);
+      for (const combo of combos) {
+        queries.push(combo.join(' ') + ' review');
       }
-    }
-
-    // 3차: 개별 해시태그
-    for (const tag of hashtags.slice(0, 4)) {
-      queries.push(`${tag} review`);
-      queries.push(`${tag} skincare`);
     }
   }
 
   // Fallback: 상품명
   if (queries.length === 0) {
-    queries.push(`${productName} 리뷰`);
-    queries.push(`${productName} 후기`);
     queries.push(`${productName} review`);
+    queries.push(`${productName} 리뷰`);
   }
 
   // 중복 제거
   return [...new Set(queries)];
+}
+
+/**
+ * 배열에서 size개 원소의 모든 조합 생성
+ * @param {string[]} arr - 원본 배열
+ * @param {number} size - 조합 크기
+ * @returns {string[][]} - 조합 배열
+ */
+function getCombinations(arr, size) {
+  if (size === 1) return arr.map(item => [item]);
+  if (size === arr.length) return [arr.slice()];
+
+  const results = [];
+  for (let i = 0; i <= arr.length - size; i++) {
+    const head = arr[i];
+    const tailCombos = getCombinations(arr.slice(i + 1), size - 1);
+    for (const tail of tailCombos) {
+      results.push([head, ...tail]);
+    }
+  }
+  return results;
 }
 
 /**
