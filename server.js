@@ -3550,7 +3550,7 @@ app.post('/datepalm-bay/api/admin/sns-reviews/manual', async (req, res) => {
     if (url.includes('youtube.com') || url.includes('youtu.be')) {
       const videoId = extractYouTubeVideoId(url);
       if (videoId) {
-        // YouTube API로 상세 정보 가져오기
+        // 1차: YouTube Data API로 상세 정보 가져오기
         try {
           const youtubeService = require('./services/youtube');
           const details = await youtubeService.getVideoDetails([videoId]);
@@ -3571,10 +3571,44 @@ app.post('/datepalm-bay/api/admin/sns-reviews/manual', async (req, res) => {
             };
           }
         } catch (err) {
-          console.log('YouTube API error, using basic info:', err.message);
+          console.log('YouTube Data API error, trying oEmbed:', err.message);
         }
 
-        // API 실패 시 기본 정보로 저장
+        // 2차: YouTube oEmbed API (API 키 불필요, 실제 제목 가져오기)
+        if (!reviewData) {
+          try {
+            const https = require('https');
+            const oembedUrl = `https://www.youtube.com/oembed?url=https://www.youtube.com/watch?v=${videoId}&format=json`;
+            const oembedData = await new Promise((resolve, reject) => {
+              https.get(oembedUrl, (res) => {
+                let data = '';
+                res.on('data', chunk => data += chunk);
+                res.on('end', () => {
+                  try { resolve(JSON.parse(data)); }
+                  catch (e) { reject(e); }
+                });
+              }).on('error', reject);
+            });
+            console.log(`YouTube oEmbed success: "${oembedData.title}"`);
+            reviewData = {
+              platform: 'YOUTUBE',
+              externalId: videoId,
+              contentUrl: `https://www.youtube.com/watch?v=${videoId}`,
+              thumbnailUrl: oembedData.thumbnail_url || `https://i.ytimg.com/vi/${videoId}/hqdefault.jpg`,
+              title: oembedData.title || 'YouTube Video',
+              description: '',
+              authorName: oembedData.author_name || 'Unknown',
+              authorId: 'unknown',
+              publishedAt: new Date().toISOString(),
+              viewCount: 0,
+              likeCount: 0,
+            };
+          } catch (err) {
+            console.log('YouTube oEmbed also failed:', err.message);
+          }
+        }
+
+        // 3차: 모두 실패 시 기본 정보
         if (!reviewData) {
           reviewData = {
             platform: 'YOUTUBE',
