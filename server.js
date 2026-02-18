@@ -2449,6 +2449,36 @@ app.patch('/datepalm-bay/api/mvp/member/edit/change-password', (req, res) => {
 });
 
 // ======================================
+// Member Withdraw (회원 탈퇴)
+// ======================================
+app.delete('/datepalm-bay/api/mvp/member/withdraw', (req, res) => {
+  console.log('\n=== [Member] Withdraw Account ===');
+  const { email } = req.body;
+
+  if (!email) {
+    return res.json({ ok: false, data: null, message: 'Email is required' });
+  }
+
+  const userIndex = users.findIndex(u => u.email === email);
+  if (userIndex === -1) {
+    return res.json({ ok: false, data: null, message: 'User not found' });
+  }
+
+  const user = users[userIndex];
+  users.splice(userIndex, 1);
+
+  const memberIndex = members.findIndex(m => m.email === email || m.code === user.code);
+  if (memberIndex !== -1) {
+    members.splice(memberIndex, 1);
+  }
+
+  saveData();
+  console.log(`✅ Account deleted: ${user.name} (${email})`);
+
+  res.json({ ok: true, data: null, message: 'Account deleted successfully' });
+});
+
+// ======================================
 // Mock Events Data (기본 시드 데이터, startServer()에서 덮어씀)
 // ======================================
 let events = [
