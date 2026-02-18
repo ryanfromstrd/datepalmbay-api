@@ -16,11 +16,11 @@ const paypalService = require('./services/paypal');
 const fedexService = require('./services/fedex');
 // MySQL Database 서비스
 const database = require('./services/database');
-// Twilio SMS 서비스
+// Twilio Verify 서비스
 const twilioClient = process.env.TWILIO_ACCOUNT_SID && process.env.TWILIO_AUTH_TOKEN
   ? require('twilio')(process.env.TWILIO_ACCOUNT_SID, process.env.TWILIO_AUTH_TOKEN)
   : null;
-const TWILIO_PHONE_FROM = process.env.TWILIO_PHONE_FROM || '';
+const TWILIO_VERIFY_SID = process.env.TWILIO_VERIFY_SERVICE_SID || '';
 let _useMySQL = false;
 let _saveTimer = null;
 
@@ -2168,7 +2168,7 @@ app.post('/datepalm-bay/mvp/google-login', (req, res) => {
 });
 
 // ======================================
-// SMS Mock Verification
+// SMS Verification (Twilio Verify API)
 // ======================================
 const smsVerifications = {};
 
@@ -2180,36 +2180,33 @@ app.post('/datepalm-bay/api/mvp/member/sms/send', async (req, res) => {
     return res.json({ ok: false, data: null, message: 'Phone number is required' });
   }
 
-  const code = String(Math.floor(100000 + Math.random() * 900000));
-  const requestId = `sms-${Date.now()}`;
   const fullPhone = `${countryCode || ''}${phone}`;
+  const requestId = `sms-${Date.now()}`;
 
-  smsVerifications[requestId] = { code, phone: fullPhone, createdAt: Date.now() };
-
-  console.log(`📱 SMS Code for ${countryCode} ${phone}: ${code}`);
-  console.log(`   Request ID: ${requestId}`);
-
-  // Twilio로 실제 SMS 발송
-  if (twilioClient && TWILIO_PHONE_FROM) {
+  // Twilio Verify API로 인증 코드 발송
+  if (twilioClient && TWILIO_VERIFY_SID) {
     try {
-      await twilioClient.messages.create({
-        body: `[DatepalmBay] Your verification code is: ${code}`,
-        from: TWILIO_PHONE_FROM,
-        to: fullPhone,
-      });
-      console.log(`✅ SMS sent via Twilio to ${fullPhone}`);
+      await twilioClient.verify.v2
+        .services(TWILIO_VERIFY_SID)
+        .verifications.create({ to: fullPhone, channel: 'sms' });
+      console.log(`✅ Twilio Verify sent to ${fullPhone}`);
+      // requestId → phone 매핑 저장 (verify 시 phone 필요)
+      smsVerifications[requestId] = { phone: fullPhone, createdAt: Date.now() };
     } catch (err) {
-      console.error(`❌ Twilio SMS failed:`, err.message);
+      console.error(`❌ Twilio Verify failed:`, err.message);
       return res.json({ ok: false, data: null, message: 'Failed to send SMS. Please try again.' });
     }
   } else {
-    console.log('⚠️  Twilio not configured - code only logged to console');
+    // Twilio 미설정 시 폴백 (개발용)
+    const code = String(Math.floor(100000 + Math.random() * 900000));
+    smsVerifications[requestId] = { code, phone: fullPhone, createdAt: Date.now() };
+    console.log(`⚠️  Twilio not configured - fallback code: ${code}`);
   }
 
   res.json({ ok: true, data: requestId, message: 'SMS verification code sent' });
 });
 
-app.post('/datepalm-bay/api/mvp/member/sms/verify', (req, res) => {
+app.post('/datepalm-bay/api/mvp/member/sms/verify', async (req, res) => {
   console.log('\n=== [SMS] Verify Code ===');
   const { requestId, code } = req.body;
 
@@ -2219,19 +2216,38 @@ app.post('/datepalm-bay/api/mvp/member/sms/verify', (req, res) => {
     return res.json({ ok: false, data: null, message: 'Invalid request' });
   }
 
-  if (Date.now() - verification.createdAt > 5 * 60 * 1000) {
+  // Twilio Verify API로 코드 검증
+  if (twilioClient && TWILIO_VERIFY_SID) {
+    try {
+      const check = await twilioClient.verify.v2
+        .services(TWILIO_VERIFY_SID)
+        .verificationChecks.create({ to: verification.phone, code });
+
+      if (check.status === 'approved') {
+        delete smsVerifications[requestId];
+        console.log('✅ Twilio Verify approved');
+        return res.json({ ok: true, data: 'verified', message: 'Phone verified successfully' });
+      } else {
+        console.log(`❌ Twilio Verify rejected: ${check.status}`);
+        return res.json({ ok: false, data: null, message: 'Code does not match' });
+      }
+    } catch (err) {
+      console.error(`❌ Twilio Verify check failed:`, err.message);
+      return res.json({ ok: false, data: null, message: 'Verification failed. Please try again.' });
+    }
+  } else {
+    // Twilio 미설정 시 폴백 (개발용)
+    if (Date.now() - verification.createdAt > 5 * 60 * 1000) {
+      delete smsVerifications[requestId];
+      return res.json({ ok: false, data: null, message: 'Code expired' });
+    }
+    if (verification.code !== code) {
+      return res.json({ ok: false, data: null, message: 'Code does not match' });
+    }
     delete smsVerifications[requestId];
-    return res.json({ ok: false, data: null, message: 'Code expired' });
+    console.log('✅ SMS verification successful (fallback)');
+    return res.json({ ok: true, data: 'verified', message: 'Phone verified successfully' });
   }
-
-  if (verification.code !== code) {
-    console.log(`❌ SMS code mismatch: expected ${verification.code}, got ${code}`);
-    return res.json({ ok: false, data: null, message: 'Code does not match' });
-  }
-
-  delete smsVerifications[requestId];
-  console.log('✅ SMS verification successful');
-  res.json({ ok: true, data: 'verified', message: 'Phone verified successfully' });
 });
 
 // ======================================
