@@ -2318,7 +2318,8 @@ app.post('/datepalm-bay/api/mvp/member/check-id', (req, res) => {
 app.post('/datepalm-bay/api/mvp/member/check-email', (req, res) => {
   console.log('\n=== [Member] Check Duplicate Email ===');
   const email = typeof req.body === 'string' ? req.body : req.body.email || req.body;
-  const isDuplicate = users.some(u => u.email === email);
+  // Google OAuth 유저(password 없음)는 이메일 가입 중복에서 제외
+  const isDuplicate = users.some(u => u.email === email && u.password);
   console.log(`Email "${email}" duplicate: ${isDuplicate}`);
   res.json({ ok: true, data: isDuplicate });
 });
@@ -2332,6 +2333,19 @@ app.post('/datepalm-bay/api/mvp/member/create', (req, res) => {
 
   if (!id || !password || !name || !email) {
     return res.json({ ok: false, data: null, message: 'Required fields missing' });
+  }
+
+  // Google OAuth 유저가 이메일로 재가입하는 경우 → 기존 유저 업데이트
+  const existingGoogleUser = users.find(u => u.email === email && !u.password);
+  if (existingGoogleUser) {
+    Object.assign(existingGoogleUser, { id, password, name, phone: phone || '', birthDate: birthdate || '', country: country || 'UNITED_STATES' });
+    // members에도 추가 (없으면)
+    if (!members.find(m => m.code === existingGoogleUser.code)) {
+      members.push({ code: existingGoogleUser.code, name, phone: phone || '', email, status: 'ACTIVE', createAt: existingGoogleUser.createAt, birthDate: birthdate || '', country: country || 'UNITED_STATES' });
+    }
+    console.log(`✅ Google user upgraded to email account: ${name} (${email})`);
+    saveData();
+    return res.json({ ok: true, data: { id: existingGoogleUser.id, code: existingGoogleUser.code, name, email, phone: phone || '', birthDate: birthdate || '', country: country || 'UNITED_STATES', status: 'ACTIVE', createDatetime: existingGoogleUser.createAt }, message: 'Member created successfully' });
   }
 
   const existingUser = users.find(u => u.id === id || u.email === email);
@@ -5583,6 +5597,16 @@ app.post('/datepalm-bay/mvp/google-login-oauth', (req, res) => {
         picture: payload.picture,
       };
       users.push(newUser);
+      members.push({
+        code: newUser.code,
+        name: newUser.name,
+        phone: newUser.phone,
+        email: newUser.email,
+        status: 'ACTIVE',
+        createAt: newUser.createAt,
+        birthDate: '',
+        country: '',
+      });
       user = newUser;
       saveData();
       console.log(`New Google user registered: ${user.name}`);
