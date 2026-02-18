@@ -5638,6 +5638,22 @@ async function startServer() {
   if (loadedData.brands && loadedData.brands.length > 0) brands = loadedData.brands;
   if (loadedData.members) members = loadedData.members;
   if (loadedData.users) users = loadedData.users;
+
+  // users에 있지만 members에 없는 유저를 members에 동기화
+  for (const user of users) {
+    if (!members.find(m => m.code === user.code || m.email === user.email)) {
+      members.push({
+        code: user.code,
+        name: user.name,
+        phone: user.phone || '',
+        email: user.email,
+        status: user.status || 'ACTIVE',
+        createAt: user.createAt,
+        birthDate: user.birthDate || '',
+        country: user.country || '',
+      });
+    }
+  }
   if (loadedData.userCoupons) userCoupons = loadedData.userCoupons;
   if (loadedData.groupBuyTeams && loadedData.groupBuyTeams.length > 0) groupBuyTeams = loadedData.groupBuyTeams;
   if (loadedData.events) events = loadedData.events;
