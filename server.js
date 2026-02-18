@@ -21,12 +21,6 @@ const twilioClient = process.env.TWILIO_ACCOUNT_SID && process.env.TWILIO_AUTH_T
   ? require('twilio')(process.env.TWILIO_ACCOUNT_SID, process.env.TWILIO_AUTH_TOKEN)
   : null;
 const TWILIO_VERIFY_SID = process.env.TWILIO_VERIFY_SERVICE_SID || '';
-// SendGrid 이메일 서비스
-const sgMail = require('@sendgrid/mail');
-if (process.env.SENDGRID_API_KEY) {
-  sgMail.setApiKey(process.env.SENDGRID_API_KEY);
-}
-const SENDGRID_FROM_EMAIL = process.env.SENDGRID_FROM_EMAIL || 'noreply@datepalmbay.com';
 let _useMySQL = false;
 let _saveTimer = null;
 
@@ -2274,29 +2268,22 @@ app.post('/datepalm-bay/api/mvp/member/email/verify/send', async (req, res) => {
     return res.json({ ok: false, data: null, message: 'This email is already in use.' });
   }
 
-  const code = String(Math.floor(100000 + Math.random() * 900000));
   const requestId = `email-${Date.now()}`;
+  emailVerifications[requestId] = { email, createdAt: Date.now() };
 
-  emailVerifications[requestId] = { code, email, createdAt: Date.now() };
-
-  if (process.env.SENDGRID_API_KEY) {
+  if (twilioClient && TWILIO_VERIFY_SID) {
     try {
-      await sgMail.send({
-        to: email,
-        from: SENDGRID_FROM_EMAIL,
-        subject: '[Datepalm Bay] Email Verification Code',
-        html: `<div style="font-family:Arial,sans-serif;max-width:480px;margin:0 auto;padding:32px">
-          <h2 style="color:#2d3748">Datepalm Bay</h2>
-          <p>Your verification code is:</p>
-          <div style="font-size:32px;font-weight:bold;letter-spacing:8px;text-align:center;padding:24px;background:#f7fafc;border-radius:8px;margin:16px 0">${code}</div>
-          <p style="color:#718096;font-size:14px">This code expires in 5 minutes.</p>
-        </div>`,
-      });
-      console.log(`📧 Email OTP sent to ${email}: ${code}`);
+      await twilioClient.verify.v2
+        .services(TWILIO_VERIFY_SID)
+        .verifications.create({ to: email, channel: 'email' });
+      console.log(`📧 Twilio Verify email sent to ${email}`);
     } catch (err) {
-      console.error('SendGrid error:', err.message);
+      console.error('Twilio Verify email error:', err.message);
+      return res.json({ ok: false, data: null, message: 'Failed to send verification email.' });
     }
   } else {
+    const code = String(Math.floor(100000 + Math.random() * 900000));
+    emailVerifications[requestId].code = code;
     console.log(`📧 [DEV] Email OTP for ${email}: ${code}`);
   }
   console.log(`   Request ID: ${requestId}`);
@@ -2304,7 +2291,7 @@ app.post('/datepalm-bay/api/mvp/member/email/verify/send', async (req, res) => {
   res.json({ ok: true, data: requestId, message: 'Email verification code sent' });
 });
 
-app.patch('/datepalm-bay/api/mvp/member/verify/auth-email', (req, res) => {
+app.patch('/datepalm-bay/api/mvp/member/verify/auth-email', async (req, res) => {
   console.log('\n=== [Email] Verify OTP Code ===');
   const { requestId, code } = req.body;
 
@@ -2314,19 +2301,38 @@ app.patch('/datepalm-bay/api/mvp/member/verify/auth-email', (req, res) => {
     return res.json({ ok: false, data: null, message: 'Invalid request' });
   }
 
-  if (Date.now() - verification.createdAt > 5 * 60 * 1000) {
+  if (twilioClient && TWILIO_VERIFY_SID) {
+    try {
+      const check = await twilioClient.verify.v2
+        .services(TWILIO_VERIFY_SID)
+        .verificationChecks.create({ to: verification.email, code });
+
+      if (check.status === 'approved') {
+        delete emailVerifications[requestId];
+        console.log('✅ Email verification successful (Twilio Verify)');
+        return res.json({ ok: true, data: 'verified', message: 'Email verified successfully' });
+      } else {
+        console.log(`❌ Email verification failed: status=${check.status}`);
+        return res.json({ ok: false, data: null, message: 'Code does not match' });
+      }
+    } catch (err) {
+      console.error('Twilio Verify check error:', err.message);
+      return res.json({ ok: false, data: null, message: 'Verification failed' });
+    }
+  } else {
+    // DEV fallback: 로컬 코드 비교
+    if (Date.now() - verification.createdAt > 5 * 60 * 1000) {
+      delete emailVerifications[requestId];
+      return res.json({ ok: false, data: null, message: 'Code expired' });
+    }
+    if (verification.code !== code) {
+      console.log(`❌ Email code mismatch: expected ${verification.code}, got ${code}`);
+      return res.json({ ok: false, data: null, message: 'Code does not match' });
+    }
     delete emailVerifications[requestId];
-    return res.json({ ok: false, data: null, message: 'Code expired' });
+    console.log('✅ Email verification successful (DEV)');
+    return res.json({ ok: true, data: 'verified', message: 'Email verified successfully' });
   }
-
-  if (verification.code !== code) {
-    console.log(`❌ Email code mismatch: expected ${verification.code}, got ${code}`);
-    return res.json({ ok: false, data: null, message: 'Code does not match' });
-  }
-
-  delete emailVerifications[requestId];
-  console.log('✅ Email verification successful');
-  res.json({ ok: true, data: 'verified', message: 'Email verified successfully' });
 });
 
 // ======================================
@@ -2443,29 +2449,22 @@ app.put('/datepalm-bay/api/mvp/member/send-auth-mail', async (req, res) => {
     return res.json({ ok: false, data: null, message: 'No user found with this email.' });
   }
 
-  const code = String(Math.floor(100000 + Math.random() * 900000));
   const requestId = `auth-mail-${Date.now()}`;
+  emailVerifications[requestId] = { email, type, createdAt: Date.now() };
 
-  emailVerifications[requestId] = { code, email, type, createdAt: Date.now() };
-
-  if (process.env.SENDGRID_API_KEY) {
+  if (twilioClient && TWILIO_VERIFY_SID) {
     try {
-      await sgMail.send({
-        to: email,
-        from: SENDGRID_FROM_EMAIL,
-        subject: '[Datepalm Bay] Password Reset Verification Code',
-        html: `<div style="font-family:Arial,sans-serif;max-width:480px;margin:0 auto;padding:32px">
-          <h2 style="color:#2d3748">Datepalm Bay</h2>
-          <p>Your password reset verification code is:</p>
-          <div style="font-size:32px;font-weight:bold;letter-spacing:8px;text-align:center;padding:24px;background:#f7fafc;border-radius:8px;margin:16px 0">${code}</div>
-          <p style="color:#718096;font-size:14px">This code expires in 5 minutes. If you did not request this, please ignore this email.</p>
-        </div>`,
-      });
-      console.log(`📧 Auth mail OTP sent to ${email} (${type}): ${code}`);
+      await twilioClient.verify.v2
+        .services(TWILIO_VERIFY_SID)
+        .verifications.create({ to: email, channel: 'email' });
+      console.log(`📧 Twilio Verify email sent to ${email} (${type})`);
     } catch (err) {
-      console.error('SendGrid error:', err.message);
+      console.error('Twilio Verify email error:', err.message);
+      return res.json({ ok: false, data: null, message: 'Failed to send verification email.' });
     }
   } else {
+    const code = String(Math.floor(100000 + Math.random() * 900000));
+    emailVerifications[requestId].code = code;
     console.log(`📧 [DEV] Auth mail OTP for ${email} (${type}): ${code}`);
   }
   console.log(`   Request ID: ${requestId}`);
