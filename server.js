@@ -21,6 +21,12 @@ const twilioClient = process.env.TWILIO_ACCOUNT_SID && process.env.TWILIO_AUTH_T
   ? require('twilio')(process.env.TWILIO_ACCOUNT_SID, process.env.TWILIO_AUTH_TOKEN)
   : null;
 const TWILIO_VERIFY_SID = process.env.TWILIO_VERIFY_SERVICE_SID || '';
+// SendGrid 이메일 서비스
+const sgMail = require('@sendgrid/mail');
+if (process.env.SENDGRID_API_KEY) {
+  sgMail.setApiKey(process.env.SENDGRID_API_KEY);
+}
+const SENDGRID_FROM_EMAIL = process.env.SENDGRID_FROM_EMAIL || 'noreply@datepalmbay.com';
 let _useMySQL = false;
 let _saveTimer = null;
 
@@ -2255,7 +2261,7 @@ app.post('/datepalm-bay/api/mvp/member/sms/verify', async (req, res) => {
 // ======================================
 const emailVerifications = {};
 
-app.post('/datepalm-bay/api/mvp/member/email/verify/send', (req, res) => {
+app.post('/datepalm-bay/api/mvp/member/email/verify/send', async (req, res) => {
   console.log('\n=== [Email] Send Verification Code ===');
   const { email } = req.body;
 
@@ -2273,7 +2279,26 @@ app.post('/datepalm-bay/api/mvp/member/email/verify/send', (req, res) => {
 
   emailVerifications[requestId] = { code, email, createdAt: Date.now() };
 
-  console.log(`📧 Email OTP for ${email}: ${code}`);
+  if (process.env.SENDGRID_API_KEY) {
+    try {
+      await sgMail.send({
+        to: email,
+        from: SENDGRID_FROM_EMAIL,
+        subject: '[Datepalm Bay] Email Verification Code',
+        html: `<div style="font-family:Arial,sans-serif;max-width:480px;margin:0 auto;padding:32px">
+          <h2 style="color:#2d3748">Datepalm Bay</h2>
+          <p>Your verification code is:</p>
+          <div style="font-size:32px;font-weight:bold;letter-spacing:8px;text-align:center;padding:24px;background:#f7fafc;border-radius:8px;margin:16px 0">${code}</div>
+          <p style="color:#718096;font-size:14px">This code expires in 5 minutes.</p>
+        </div>`,
+      });
+      console.log(`📧 Email OTP sent to ${email}: ${code}`);
+    } catch (err) {
+      console.error('SendGrid error:', err.message);
+    }
+  } else {
+    console.log(`📧 [DEV] Email OTP for ${email}: ${code}`);
+  }
   console.log(`   Request ID: ${requestId}`);
 
   res.json({ ok: true, data: requestId, message: 'Email verification code sent' });
@@ -2409,7 +2434,7 @@ app.post('/datepalm-bay/api/mvp/member/create', (req, res) => {
 // ======================================
 // Forgot Account - Send Auth Mail
 // ======================================
-app.put('/datepalm-bay/api/mvp/member/send-auth-mail', (req, res) => {
+app.put('/datepalm-bay/api/mvp/member/send-auth-mail', async (req, res) => {
   console.log('\n=== [Auth] Send Auth Mail ===');
   const { email, type } = req.body;
 
@@ -2423,7 +2448,26 @@ app.put('/datepalm-bay/api/mvp/member/send-auth-mail', (req, res) => {
 
   emailVerifications[requestId] = { code, email, type, createdAt: Date.now() };
 
-  console.log(`📧 Auth mail OTP for ${email} (${type}): ${code}`);
+  if (process.env.SENDGRID_API_KEY) {
+    try {
+      await sgMail.send({
+        to: email,
+        from: SENDGRID_FROM_EMAIL,
+        subject: '[Datepalm Bay] Password Reset Verification Code',
+        html: `<div style="font-family:Arial,sans-serif;max-width:480px;margin:0 auto;padding:32px">
+          <h2 style="color:#2d3748">Datepalm Bay</h2>
+          <p>Your password reset verification code is:</p>
+          <div style="font-size:32px;font-weight:bold;letter-spacing:8px;text-align:center;padding:24px;background:#f7fafc;border-radius:8px;margin:16px 0">${code}</div>
+          <p style="color:#718096;font-size:14px">This code expires in 5 minutes. If you did not request this, please ignore this email.</p>
+        </div>`,
+      });
+      console.log(`📧 Auth mail OTP sent to ${email} (${type}): ${code}`);
+    } catch (err) {
+      console.error('SendGrid error:', err.message);
+    }
+  } else {
+    console.log(`📧 [DEV] Auth mail OTP for ${email} (${type}): ${code}`);
+  }
   console.log(`   Request ID: ${requestId}`);
 
   res.json({ ok: true, data: requestId, message: 'Auth mail sent' });
