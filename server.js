@@ -17,10 +17,19 @@ const fedexService = require('./services/fedex');
 // MySQL Database 서비스
 const database = require('./services/database');
 // Twilio Verify 서비스
+// Twilio 환경변수 디버그 로그
+console.log('🔍 [Twilio Init] TWILIO_ACCOUNT_SID:', process.env.TWILIO_ACCOUNT_SID ? `${process.env.TWILIO_ACCOUNT_SID.substring(0, 6)}...` : 'NOT SET');
+console.log('🔍 [Twilio Init] TWILIO_AUTH_TOKEN:', process.env.TWILIO_AUTH_TOKEN ? 'SET (hidden)' : 'NOT SET');
+console.log('🔍 [Twilio Init] TWILIO_VERIFY_SERVICE_SID:', process.env.TWILIO_VERIFY_SERVICE_SID ? `${process.env.TWILIO_VERIFY_SERVICE_SID.substring(0, 6)}...` : 'NOT SET');
+
 const twilioClient = process.env.TWILIO_ACCOUNT_SID && process.env.TWILIO_AUTH_TOKEN
   ? require('twilio')(process.env.TWILIO_ACCOUNT_SID, process.env.TWILIO_AUTH_TOKEN)
   : null;
 const TWILIO_VERIFY_SID = process.env.TWILIO_VERIFY_SERVICE_SID || '';
+
+console.log('🔍 [Twilio Init] twilioClient created:', !!twilioClient);
+console.log('🔍 [Twilio Init] TWILIO_VERIFY_SID:', TWILIO_VERIFY_SID ? `${TWILIO_VERIFY_SID.substring(0, 6)}...` : 'EMPTY');
+
 let _useMySQL = false;
 let _saveTimer = null;
 
@@ -2186,6 +2195,7 @@ app.post('/datepalm-bay/api/mvp/member/sms/send', async (req, res) => {
   const requestId = `sms-${Date.now()}`;
 
   // Twilio Verify API로 인증 코드 발송
+  console.log(`🔍 [SMS] twilioClient: ${!!twilioClient}, TWILIO_VERIFY_SID: "${TWILIO_VERIFY_SID}", fullPhone: "${fullPhone}"`);
   if (twilioClient && TWILIO_VERIFY_SID) {
     try {
       await twilioClient.verify.v2
