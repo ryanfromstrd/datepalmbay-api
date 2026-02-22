@@ -17,18 +17,20 @@ const fedexService = require('./services/fedex');
 // MySQL Database 서비스
 const database = require('./services/database');
 // Twilio Verify 서비스
-// Twilio 환경변수 디버그 로그
-console.log('🔍 [Twilio Init] TWILIO_ACCOUNT_SID:', process.env.TWILIO_ACCOUNT_SID ? `${process.env.TWILIO_ACCOUNT_SID.substring(0, 6)}...` : 'NOT SET');
-console.log('🔍 [Twilio Init] TWILIO_AUTH_TOKEN:', process.env.TWILIO_AUTH_TOKEN ? `SET (length=${process.env.TWILIO_AUTH_TOKEN.length}, first4=${process.env.TWILIO_AUTH_TOKEN.substring(0, 4)})` : 'NOT SET');
-console.log('🔍 [Twilio Init] TWILIO_VERIFY_SERVICE_SID:', process.env.TWILIO_VERIFY_SERVICE_SID ? `${process.env.TWILIO_VERIFY_SERVICE_SID.substring(0, 6)}...` : 'NOT SET');
+// Twilio 환경변수 (trim으로 공백/줄바꿈 제거)
+const TWILIO_ACCOUNT_SID = (process.env.TWILIO_ACCOUNT_SID || '').trim();
+const TWILIO_AUTH_TOKEN = (process.env.TWILIO_AUTH_TOKEN || '').trim();
+const TWILIO_VERIFY_SID = (process.env.TWILIO_VERIFY_SERVICE_SID || '').trim();
 
-const twilioClient = process.env.TWILIO_ACCOUNT_SID && process.env.TWILIO_AUTH_TOKEN
-  ? require('twilio')(process.env.TWILIO_ACCOUNT_SID, process.env.TWILIO_AUTH_TOKEN)
+console.log('🔍 [Twilio Init] ACCOUNT_SID:', TWILIO_ACCOUNT_SID ? `${TWILIO_ACCOUNT_SID.substring(0, 6)}... (len=${TWILIO_ACCOUNT_SID.length})` : 'NOT SET');
+console.log('🔍 [Twilio Init] AUTH_TOKEN:', TWILIO_AUTH_TOKEN ? `SET (len=${TWILIO_AUTH_TOKEN.length})` : 'NOT SET');
+console.log('🔍 [Twilio Init] VERIFY_SID:', TWILIO_VERIFY_SID ? `${TWILIO_VERIFY_SID.substring(0, 6)}... (len=${TWILIO_VERIFY_SID.length})` : 'NOT SET');
+
+const twilioClient = TWILIO_ACCOUNT_SID && TWILIO_AUTH_TOKEN
+  ? require('twilio')(TWILIO_ACCOUNT_SID, TWILIO_AUTH_TOKEN)
   : null;
-const TWILIO_VERIFY_SID = process.env.TWILIO_VERIFY_SERVICE_SID || '';
 
 console.log('🔍 [Twilio Init] twilioClient created:', !!twilioClient);
-console.log('🔍 [Twilio Init] TWILIO_VERIFY_SID:', TWILIO_VERIFY_SID ? `${TWILIO_VERIFY_SID.substring(0, 6)}...` : 'EMPTY');
 
 let _useMySQL = false;
 let _saveTimer = null;
