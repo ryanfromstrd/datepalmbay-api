@@ -19,7 +19,7 @@ const database = require('./services/database');
 // Twilio Verify 서비스
 // Twilio 환경변수 디버그 로그
 console.log('🔍 [Twilio Init] TWILIO_ACCOUNT_SID:', process.env.TWILIO_ACCOUNT_SID ? `${process.env.TWILIO_ACCOUNT_SID.substring(0, 6)}...` : 'NOT SET');
-console.log('🔍 [Twilio Init] TWILIO_AUTH_TOKEN:', process.env.TWILIO_AUTH_TOKEN ? 'SET (hidden)' : 'NOT SET');
+console.log('🔍 [Twilio Init] TWILIO_AUTH_TOKEN:', process.env.TWILIO_AUTH_TOKEN ? `SET (length=${process.env.TWILIO_AUTH_TOKEN.length}, first4=${process.env.TWILIO_AUTH_TOKEN.substring(0, 4)})` : 'NOT SET');
 console.log('🔍 [Twilio Init] TWILIO_VERIFY_SERVICE_SID:', process.env.TWILIO_VERIFY_SERVICE_SID ? `${process.env.TWILIO_VERIFY_SERVICE_SID.substring(0, 6)}...` : 'NOT SET');
 
 const twilioClient = process.env.TWILIO_ACCOUNT_SID && process.env.TWILIO_AUTH_TOKEN
@@ -2205,7 +2205,7 @@ app.post('/datepalm-bay/api/mvp/member/sms/send', async (req, res) => {
       // requestId → phone 매핑 저장 (verify 시 phone 필요)
       smsVerifications[requestId] = { phone: fullPhone, createdAt: Date.now() };
     } catch (err) {
-      console.error(`❌ Twilio Verify failed:`, err.message);
+      console.error(`❌ Twilio Verify failed:`, err.message, `| code: ${err.code} | status: ${err.status} | moreInfo: ${err.moreInfo}`);
       return res.json({ ok: false, data: null, message: 'Failed to send SMS. Please try again.' });
     }
   } else {
