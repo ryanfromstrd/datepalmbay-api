@@ -2343,16 +2343,16 @@ app.post('/datepalm-bay/api/mvp/member/check-id', (req, res) => {
   const { id } = req.body;
   const isDuplicate = users.some(u => u.id === id);
   console.log(`ID "${id}" duplicate: ${isDuplicate}`);
-  res.json({ ok: true, data: isDuplicate });
+  res.json(isDuplicate);
 });
 
 app.post('/datepalm-bay/api/mvp/member/check-email', (req, res) => {
   console.log('\n=== [Member] Check Duplicate Email ===');
-  const email = typeof req.body === 'string' ? req.body : req.body.email || req.body;
+  const email = req.body?.email || req.body;
   // Google OAuth 유저(password 없음)는 이메일 가입 중복에서 제외
   const isDuplicate = users.some(u => u.email === email && u.password);
   console.log(`Email "${email}" duplicate: ${isDuplicate}`);
-  res.json({ ok: true, data: isDuplicate });
+  res.json(isDuplicate);
 });
 
 // ======================================
