@@ -1,4 +1,5 @@
-require('dotenv').config();
+const dotenvResult = require('dotenv').config();
+console.log('🔍 [dotenv] .env file:', dotenvResult.error ? 'NOT FOUND' : `LOADED (keys: ${Object.keys(dotenvResult.parsed || {}).join(', ')})`);
 
 const express = require('express');
 const cors = require('cors');
@@ -17,10 +18,16 @@ const fedexService = require('./services/fedex');
 // MySQL Database 서비스
 const database = require('./services/database');
 // Twilio Verify 서비스
-// Twilio 환경변수 (trim으로 공백/줄바꿈 제거)
-const TWILIO_ACCOUNT_SID = (process.env.TWILIO_ACCOUNT_SID || '').trim();
-const TWILIO_AUTH_TOKEN = (process.env.TWILIO_AUTH_TOKEN || '').trim();
-const TWILIO_VERIFY_SID = (process.env.TWILIO_VERIFY_SERVICE_SID || '').trim();
+// 환경변수 hex dump (오염 문자 진단)
+if (process.env.TWILIO_AUTH_TOKEN) {
+  const raw = process.env.TWILIO_AUTH_TOKEN;
+  const hex = [...raw].map(c => c.charCodeAt(0).toString(16).padStart(2, '0')).join(' ');
+  console.log(`🔍 [Twilio] AUTH_TOKEN raw (len=${raw.length}): ${hex}`);
+}
+// 환경변수 정규식 정제 (비허용 문자 제거)
+const TWILIO_ACCOUNT_SID = (process.env.TWILIO_ACCOUNT_SID || '').replace(/[^a-zA-Z0-9]/g, '');
+const TWILIO_AUTH_TOKEN = (process.env.TWILIO_AUTH_TOKEN || '').replace(/[^a-f0-9]/gi, '');
+const TWILIO_VERIFY_SID = (process.env.TWILIO_VERIFY_SERVICE_SID || '').replace(/[^a-zA-Z0-9]/g, '');
 
 console.log('🔍 [Twilio Init] ACCOUNT_SID:', TWILIO_ACCOUNT_SID ? `${TWILIO_ACCOUNT_SID.substring(0, 6)}... (len=${TWILIO_ACCOUNT_SID.length})` : 'NOT SET');
 console.log('🔍 [Twilio Init] AUTH_TOKEN:', TWILIO_AUTH_TOKEN ? `SET (len=${TWILIO_AUTH_TOKEN.length})` : 'NOT SET');
@@ -31,6 +38,13 @@ const twilioClient = TWILIO_ACCOUNT_SID && TWILIO_AUTH_TOKEN
   : null;
 
 console.log('🔍 [Twilio Init] twilioClient created:', !!twilioClient);
+
+// 서버 시작 시 Twilio 인증 즉시 테스트
+if (twilioClient) {
+  twilioClient.api.accounts(TWILIO_ACCOUNT_SID).fetch()
+    .then(() => console.log('✅ [Twilio] Credentials verified OK'))
+    .catch(err => console.error(`❌ [Twilio] Credential check failed: ${err.message}`));
+}
 
 let _useMySQL = false;
 let _saveTimer = null;
