@@ -2180,7 +2180,9 @@ app.post('/datepalm-bay/api/mvp/member/sms/send', async (req, res) => {
     return res.json({ ok: false, data: null, message: 'Phone number is required' });
   }
 
-  const fullPhone = `${countryCode || ''}${phone}`;
+  // E.164 형식: 국가코드 + 번호 (앞자리 0 제거)
+  const cleanPhone = phone.replace(/^0+/, '');
+  const fullPhone = `${countryCode || ''}${cleanPhone}`;
   const requestId = `sms-${Date.now()}`;
 
   // Twilio Verify API로 인증 코드 발송
