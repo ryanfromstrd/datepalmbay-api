@@ -10,6 +10,8 @@ const fs = require('fs');
 const snsCollector = require('./services/snsReviewCollector');
 // 리뷰 요약 서비스
 const reviewSummarizer = require('./services/reviewSummarizer');
+// Claude AI 리뷰 분석 서비스
+const claudeReviewSummarizer = require('./services/claudeReviewSummarizer');
 // PayPal 결제 서비스
 const paypalService = require('./services/paypal');
 // FedEx 물류 서비스
@@ -73,7 +75,7 @@ async function waitForMySQL(maxRetries = 5) {
 // 데이터 로드 함수 (MySQL → JSON 파일 → 빈 저장소)
 // ========================================
 async function loadData() {
-  const emptyData = { products: [], snsReviews: [], brands: [], orders: null, members: null, users: null, userCoupons: null, coupons: null, groupBuyTeams: [], events: null };
+  const emptyData = { products: [], snsReviews: [], brands: [], orders: null, members: null, users: null, userCoupons: null, coupons: null, groupBuyTeams: [], events: null, snsReviewOverrides: [], productInsights: [], aiFeedbackHistory: [] };
 
   // 1단계: MySQL에서 로드 시도
   if (_useMySQL) {
@@ -92,6 +94,9 @@ async function loadData() {
           coupons: mysqlData.coupons || null,
           groupBuyTeams: mysqlData.groupBuyTeams || [],
           events: mysqlData.events || null,
+          snsReviewOverrides: mysqlData.snsReviewOverrides || [],
+          productInsights: mysqlData.productInsights || [],
+          aiFeedbackHistory: mysqlData.aiFeedbackHistory || [],
         };
       }
       console.log('🗄️  MySQL 비어있음, JSON 파일 확인...');
@@ -173,6 +178,9 @@ async function _saveDataImpl() {
     coupons: coupons,
     groupBuyTeams: groupBuyTeams,
     events: events,
+    snsReviewOverrides: snsReviewOverrides,
+    productInsights: productInsights,
+    aiFeedbackHistory: aiFeedbackHistory,
   };
 
   if (_useMySQL) {
@@ -3382,6 +3390,10 @@ app.delete('/datepalm-bay/api/admin/event/delete/:code', (req, res) => {
 
 // SNS 리뷰 Mock 데이터 저장소 (startServer()에서 로드)
 let snsReviews = [];
+// AI 리뷰 오버라이드/인사이트/피드백 저장소
+let snsReviewOverrides = [];
+let productInsights = [];
+let aiFeedbackHistory = [];
 
 // SNS 수집기에 참조 및 저장 콜백 설정
 snsCollector.setReferences(snsReviews, products, saveData);
@@ -3465,8 +3477,8 @@ app.get('/datepalm-bay/api/mvp/product/:productCode/sns-reviews', (req, res) => 
   });
 });
 
-// 상품별 SNS 리뷰 요약 (AI 요약 - 키워드 기반 자체 구현)
-app.get('/datepalm-bay/api/mvp/product/:productCode/sns-reviews/summary', (req, res) => {
+// 상품별 SNS 리뷰 요약 (오버라이드 → Claude AI → 키워드 fallback)
+app.get('/datepalm-bay/api/mvp/product/:productCode/sns-reviews/summary', async (req, res) => {
   const { productCode } = req.params;
 
   console.log(`📊 SNS Review Summary requested for product: ${productCode}`);
@@ -3479,14 +3491,29 @@ app.get('/datepalm-bay/api/mvp/product/:productCode/sns-reviews/summary', (req, 
 
   console.log(`Found ${approvedReviews.length} approved reviews for summary`);
 
-  // 리뷰 요약 생성
-  const summary = reviewSummarizer.summarizeReviews(approvedReviews);
+  try {
+    // Claude AI 서비스를 통한 요약 (오버라이드 → Claude → 키워드 fallback 체인)
+    const summary = await claudeReviewSummarizer.getSummary(
+      productCode,
+      approvedReviews,
+      reviewSummarizer.summarizeReviews.bind(reviewSummarizer)
+    );
 
-  res.json({
-    ok: true,
-    data: summary,
-    message: 'SNS review summary generated successfully'
-  });
+    res.json({
+      ok: true,
+      data: summary,
+      message: 'SNS review summary generated successfully'
+    });
+  } catch (error) {
+    console.error(`❌ Summary generation failed:`, error.message);
+    // 최종 fallback: 키워드 방식
+    const summary = reviewSummarizer.summarizeReviews(approvedReviews);
+    res.json({
+      ok: true,
+      data: { ...summary, aiProvider: 'keyword-fallback' },
+      message: 'SNS review summary generated (keyword fallback)'
+    });
+  }
 });
 
 // 어드민: 전체 SNS 리뷰 목록
@@ -3894,6 +3921,155 @@ app.post('/datepalm-bay/api/admin/sns-reviews/manual', async (req, res) => {
       message: error.message
     });
   }
+});
+
+// ========================================
+// AI 리뷰 요약 오버라이드 & Claude 재분석 API (어드민용)
+// ========================================
+
+// 오버라이드 + 자동생성 요약 조회
+app.get('/datepalm-bay/api/admin/sns-reviews/:productCode/summary-override', async (req, res) => {
+  const { productCode } = req.params;
+
+  console.log(`📝 Admin: Summary override requested for ${productCode}`);
+
+  // 오버라이드 데이터
+  const override = snsReviewOverrides.find(o => o.productCode === productCode) || null;
+
+  // 승인된 리뷰
+  const approvedReviews = snsReviews.filter(r =>
+    r.status === 'APPROVED' &&
+    r.matchedProducts.some(m => m.productCode === productCode)
+  );
+
+  // 자동생성 요약 (키워드 기반)
+  const autoGenerated = reviewSummarizer.summarizeReviews(approvedReviews);
+
+  // Claude AI 분석 결과 (저장된 insights)
+  const insights = claudeReviewSummarizer.getProductInsights(productCode);
+
+  // AI 분석 상태
+  const aiStatus = claudeReviewSummarizer.getAnalysisStatus();
+
+  res.json({
+    ok: true,
+    data: {
+      override,
+      autoGenerated,
+      insights,
+      aiStatus,
+      approvedReviewCount: approvedReviews.length,
+    },
+    message: 'Summary override data retrieved'
+  });
+});
+
+// 수동 편집 저장
+app.put('/datepalm-bay/api/admin/sns-reviews/:productCode/summary-override', (req, res) => {
+  const { productCode } = req.params;
+  const { summary, hashtags, sentiment } = req.body;
+
+  console.log(`📝 Admin: Saving summary override for ${productCode}`);
+
+  if (!summary || typeof summary !== 'string') {
+    return res.status(400).json({ ok: false, message: 'summary is required' });
+  }
+
+  // 기존 오버라이드 찾기
+  const existingIdx = snsReviewOverrides.findIndex(o => o.productCode === productCode);
+
+  // 피드백 기록 (기존 자동생성 → 수정본)
+  const approvedReviews = snsReviews.filter(r =>
+    r.status === 'APPROVED' &&
+    r.matchedProducts.some(m => m.productCode === productCode)
+  );
+  const autoGenerated = reviewSummarizer.summarizeReviews(approvedReviews);
+  if (autoGenerated && autoGenerated.summary) {
+    const originalSummary = existingIdx >= 0
+      ? snsReviewOverrides[existingIdx].summary
+      : autoGenerated.summary;
+    claudeReviewSummarizer.recordFeedback(productCode, originalSummary, summary);
+  }
+
+  const overrideData = {
+    productCode,
+    summary,
+    hashtags: hashtags || [],
+    sentiment: sentiment || null,
+    updatedAt: new Date().toISOString(),
+  };
+
+  if (existingIdx >= 0) {
+    snsReviewOverrides[existingIdx] = overrideData;
+  } else {
+    snsReviewOverrides.push(overrideData);
+  }
+
+  saveData();
+
+  res.json({
+    ok: true,
+    data: overrideData,
+    message: 'Summary override saved successfully'
+  });
+});
+
+// 오버라이드 삭제 (자동생성 복원)
+app.delete('/datepalm-bay/api/admin/sns-reviews/:productCode/summary-override', (req, res) => {
+  const { productCode } = req.params;
+
+  console.log(`📝 Admin: Deleting summary override for ${productCode}`);
+
+  const idx = snsReviewOverrides.findIndex(o => o.productCode === productCode);
+  if (idx >= 0) {
+    snsReviewOverrides.splice(idx, 1);
+    saveData();
+  }
+
+  res.json({
+    ok: true,
+    message: 'Summary override deleted, auto-generated summary restored'
+  });
+});
+
+// Claude AI 수동 재분석 트리거
+app.post('/datepalm-bay/api/admin/sns-reviews/:productCode/ai-analyze', async (req, res) => {
+  const { productCode } = req.params;
+
+  console.log(`🤖 Admin: AI re-analysis triggered for ${productCode}`);
+
+  const approvedReviews = snsReviews.filter(r =>
+    r.status === 'APPROVED' &&
+    r.matchedProducts.some(m => m.productCode === productCode)
+  );
+
+  if (approvedReviews.length === 0) {
+    return res.json({
+      ok: false,
+      message: 'No approved reviews to analyze'
+    });
+  }
+
+  // 상품명 찾기
+  const product = products.find(p => p.productCode === productCode);
+  const productName = product ? product.productName : productCode;
+
+  const result = await claudeReviewSummarizer.triggerReanalysis(productCode, approvedReviews, productName);
+
+  res.json({
+    ok: result.success,
+    data: result.data || null,
+    message: result.message || (result.success ? 'AI re-analysis completed' : 'AI re-analysis failed')
+  });
+});
+
+// AI 분석 상태 조회
+app.get('/datepalm-bay/api/admin/sns-reviews/ai-status', (req, res) => {
+  res.json({
+    ok: true,
+    data: claudeReviewSummarizer.getAnalysisStatus(),
+    message: 'AI analysis status retrieved'
+  });
 });
 
 // YouTube 비디오 ID 추출 헬퍼 함수
@@ -5738,6 +5914,9 @@ async function startServer() {
   if (loadedData.coupons) coupons = loadedData.coupons;
   if (loadedData.snsReviews && loadedData.snsReviews.length > 0) snsReviews = loadedData.snsReviews;
   if (loadedData.orders) customerOrders = loadedData.orders;
+  if (loadedData.snsReviewOverrides) snsReviewOverrides = loadedData.snsReviewOverrides;
+  if (loadedData.productInsights) productInsights = loadedData.productInsights;
+  if (loadedData.aiFeedbackHistory) aiFeedbackHistory = loadedData.aiFeedbackHistory;
 
   // 4. 더미/테스트 주문 데이터 정리
   const testOrderIds = ['ORDER-TEST-FEDEX-001', 'ORDER-TEST-002', 'ORDER-TEST-FEDEX-003'];
@@ -5751,6 +5930,14 @@ async function startServer() {
 
   // 5. SNS 수집기에 로드된 데이터 참조 재설정
   snsCollector.setReferences(snsReviews, products, saveData);
+
+  // 6. Claude AI 리뷰 분석기 초기화
+  claudeReviewSummarizer.initialize({
+    productInsights,
+    aiFeedbackHistory,
+    snsReviewOverrides,
+    onSave: saveData,
+  });
 
   console.log(`\n📊 데이터 로드 완료: ${products.length}개 상품, ${brands.length}개 브랜드, ${(customerOrders || []).length}개 주문, ${(members || []).length}개 회원`);
 
@@ -5772,6 +5959,7 @@ async function startServer() {
     console.log(`  TikTok API: ${process.env.TIKTOK_CLIENT_KEY && process.env.TIKTOK_CLIENT_SECRET ? '✅ Configured' : '⚠️  Not configured (optional)'}`);
     console.log(`  Instagram API: ${process.env.INSTAGRAM_ACCESS_TOKEN && process.env.INSTAGRAM_BUSINESS_ACCOUNT_ID ? '✅ Configured' : '⚠️  Not configured (optional)'}`);
     console.log(`  FedEx API: ${process.env.FEDEX_API_KEY && process.env.FEDEX_SECRET_KEY ? '✅ Configured' : '⚠️  Not configured (optional)'}`);
+    console.log(`  Claude AI: ${claudeReviewSummarizer.isClaudeAvailable() ? '✅ Connected (provider: claude)' : '⚠️  Not configured (keyword fallback)'}`);
     console.log('');
   });
 }
