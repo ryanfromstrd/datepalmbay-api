@@ -3972,12 +3972,13 @@ app.get('/datepalm-bay/api/admin/sns-reviews/:productCode/summary-override', asy
 // 수동 편집 저장
 app.put('/datepalm-bay/api/admin/sns-reviews/:productCode/summary-override', (req, res) => {
   const { productCode } = req.params;
-  const { summary, hashtags, sentiment } = req.body;
+  const { summary, hashtags, sentiment, direction } = req.body;
 
   console.log(`📝 Admin: Saving summary override for ${productCode}`);
 
-  if (!summary || typeof summary !== 'string') {
-    return res.status(400).json({ ok: false, message: 'summary is required' });
+  // summary 또는 direction 중 하나는 있어야 함
+  if ((!summary || typeof summary !== 'string') && !direction) {
+    return res.status(400).json({ ok: false, message: 'summary or direction is required' });
   }
 
   // 기존 오버라이드 찾기
@@ -3996,11 +3997,15 @@ app.put('/datepalm-bay/api/admin/sns-reviews/:productCode/summary-override', (re
     claudeReviewSummarizer.recordFeedback(productCode, originalSummary, summary);
   }
 
+  // 기존 데이터 보존하면서 업데이트
+  const existingData = existingIdx >= 0 ? snsReviewOverrides[existingIdx] : {};
   const overrideData = {
+    ...existingData,
     productCode,
-    summary,
-    hashtags: hashtags || [],
-    sentiment: sentiment || null,
+    summary: summary || existingData.summary || '',
+    hashtags: hashtags || existingData.hashtags || [],
+    sentiment: sentiment || existingData.sentiment || null,
+    direction: direction !== undefined ? direction : (existingData.direction || ''),
     updatedAt: new Date().toISOString(),
   };
 

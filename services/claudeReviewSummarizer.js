@@ -81,7 +81,7 @@ function getRecentFeedback(productCode) {
 /**
  * 시스템 프롬프트 생성
  */
-function buildSystemPrompt(productInsights, feedbackHistory) {
+function buildSystemPrompt(productInsights, feedbackHistory, adminDirection) {
   let prompt = `You are a K-Beauty review analyst for Datepalm Bay, a global K-Beauty e-commerce platform.
 Your task is to analyze YouTube video reviews about K-Beauty products and generate insights.
 
@@ -91,6 +91,11 @@ Guidelines:
 - Be specific about what reviewers mention (ingredients, results, comparisons)
 - Use professional but approachable tone
 - Generate relevant hashtags that customers would search for`;
+
+  // Admin 방향 지시 (최우선)
+  if (adminDirection) {
+    prompt += `\n\n[IMPORTANT - Admin direction for this product]:\n${adminDirection}\nYou MUST follow this direction when analyzing reviews.`;
+  }
 
   // 기존 분석 컨텍스트 추가
   if (productInsights && productInsights.insights) {
@@ -134,7 +139,10 @@ async function analyzeWithClaude(reviews, productCode, productName) {
 
   const existingInsights = getProductInsights(productCode);
   const feedbackHistory = getRecentFeedback(productCode);
-  const systemPrompt = buildSystemPrompt(existingInsights, feedbackHistory);
+  // Admin direction 가져오기
+  const override = snsReviewOverridesRef ? snsReviewOverridesRef.find(o => o.productCode === productCode) : null;
+  const adminDirection = override?.direction || null;
+  const systemPrompt = buildSystemPrompt(existingInsights, feedbackHistory, adminDirection);
 
   const reviewText = formatReviewsForAnalysis(reviews);
 
