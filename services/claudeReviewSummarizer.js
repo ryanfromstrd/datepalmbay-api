@@ -297,8 +297,17 @@ async function getSummary(productCode, approvedReviews, keywordFallback) {
   if (keywordFallback && approvedReviews.length > 0) {
     console.log(`🔤 키워드 fallback 사용: ${productCode}`);
     const kwResult = keywordFallback(approvedReviews);
+    // kwResult.summary가 {ko, en} 객체일 수 있음 → 문자열로 정규화
+    const normalizedSummary = typeof kwResult.summary === 'object'
+      ? (kwResult.summary.en || kwResult.summary.ko || '')
+      : (kwResult.summary || '');
+    const normalizedHashtags = (kwResult.hashtags || []).map(
+      h => typeof h === 'object' ? (h.displayTag || h.tag || '') : h
+    ).filter(Boolean);
     return {
       ...kwResult,
+      summary: normalizedSummary,
+      hashtags: normalizedHashtags,
       aiProvider: 'keyword',
     };
   }
