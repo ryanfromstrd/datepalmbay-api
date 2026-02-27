@@ -702,6 +702,23 @@ function calculateSentiment(aggregated) {
 }
 
 /**
+ * 한국어→영어 변환 룩업 테이블 생성 (KEYWORD_DICTIONARY에서 추출)
+ */
+function buildKoreanToEnglishMap() {
+  const map = {};
+  for (const categoryData of Object.values(KEYWORD_DICTIONARY)) {
+    for (const [keyword, info] of Object.entries(categoryData.keywords)) {
+      if (info.en && /[가-힣]/.test(keyword)) {
+        map[keyword.toLowerCase()] = info.en;
+      }
+    }
+  }
+  return map;
+}
+
+const KOREAN_TO_ENGLISH = buildKoreanToEnglishMap();
+
+/**
  * 모든 키워드를 영어 해시태그 형식으로 추출 (동적 키워드 포함)
  * @param {Object} aggregated - 사전 기반 집계 결과
  * @param {Array} dynamicKeywords - 동적 추출 키워드
@@ -713,12 +730,25 @@ function extractAllHashtags(aggregated, dynamicKeywords = []) {
   // 1. 동적 키워드 먼저 추가 (실제 리뷰에서 추출된 키워드 우선)
   for (const kw of dynamicKeywords) {
     const normalizedKey = kw.keyword.toLowerCase();
+    const isKorean = /[가-힣]/.test(kw.keyword);
 
-    if (!seenKeywords.has(normalizedKey)) {
-      seenKeywords.add(normalizedKey);
+    // 한국어 키워드는 영어로 변환, 사전에 없으면 제외
+    let displayTag = kw.keyword;
+    let tag = kw.keyword.toLowerCase();
+
+    if (isKorean) {
+      const englishTranslation = KOREAN_TO_ENGLISH[normalizedKey];
+      if (!englishTranslation) continue; // 사전에 없는 한국어 → 건너뛰기
+      displayTag = englishTranslation;
+      tag = englishTranslation.toLowerCase().replace(/\s+/g, '');
+    }
+
+    const dedupeKey = tag.replace(/[\s-_]/g, '');
+    if (!seenKeywords.has(dedupeKey)) {
+      seenKeywords.add(dedupeKey);
       hashtags.push({
-        tag: kw.keyword.toLowerCase(),
-        displayTag: kw.keyword,
+        tag,
+        displayTag,
         count: kw.count,
         category: 'dynamic',
         isBoosted: kw.isBoosted
