@@ -3493,11 +3493,38 @@ app.get('/datepalm-bay/api/mvp/product/:productCode/sns-reviews/summary', async 
 
   try {
     // Claude AI 서비스를 통한 요약 (오버라이드 → Claude → 키워드 fallback 체인)
-    const summary = await claudeReviewSummarizer.getSummary(
+    const rawSummary = await claudeReviewSummarizer.getSummary(
       productCode,
       approvedReviews,
       reviewSummarizer.summarizeReviews.bind(reviewSummarizer)
     );
+
+    // Frontend 호환 형식으로 정규화
+    // Frontend는 summary: {ko, en}, hashtags: [{tag, displayTag, count, category}] 기대
+    const isKeywordFormat = rawSummary.aiProvider === 'keyword';
+    let summary;
+
+    if (isKeywordFormat) {
+      // 키워드 fallback → 이미 Frontend 호환 형식 (원본 그대로 전달)
+      const kwResult = reviewSummarizer.summarizeReviews(approvedReviews);
+      summary = { ...kwResult, aiProvider: 'keyword' };
+    } else {
+      // Claude/override/insights → plain string을 Frontend 형식으로 변환
+      const summaryText = typeof rawSummary.summary === 'string' ? rawSummary.summary : (rawSummary.summary?.en || '');
+      const hashtagItems = (rawSummary.hashtags || []).map((h, i) => {
+        if (typeof h === 'object' && h.tag) return h; // 이미 객체면 그대로
+        return { tag: String(h).toLowerCase().replace(/\s+/g, ''), displayTag: String(h), count: 1, category: 'ai' };
+      });
+
+      summary = {
+        hasData: !!summaryText,
+        reviewCount: rawSummary.reviewCount || approvedReviews.length,
+        summary: { ko: summaryText, en: summaryText },
+        hashtags: hashtagItems,
+        sentiment: rawSummary.sentiment || { positiveRatio: 0, negativeRatio: 0 },
+        aiProvider: rawSummary.aiProvider,
+      };
+    }
 
     res.json({
       ok: true,
@@ -4064,13 +4091,23 @@ app.post('/datepalm-bay/api/admin/sns-reviews/:productCode/ai-analyze', async (r
   const product = products.find(p => p.productCode === productCode);
   const productName = product ? product.productName : productCode;
 
-  const result = await claudeReviewSummarizer.triggerReanalysis(productCode, approvedReviews, productName);
+  try {
+    const result = await claudeReviewSummarizer.triggerReanalysis(productCode, approvedReviews, productName);
+    console.log(`🤖 AI re-analysis result:`, JSON.stringify(result).substring(0, 200));
 
-  res.json({
-    ok: result.success,
-    data: result.data || null,
-    message: result.message || (result.success ? 'AI re-analysis completed' : 'AI re-analysis failed')
-  });
+    res.json({
+      ok: result.success,
+      data: result.data || null,
+      message: result.message || (result.success ? 'AI re-analysis completed' : 'AI re-analysis failed')
+    });
+  } catch (error) {
+    console.error(`❌ AI re-analysis error:`, error);
+    res.status(500).json({
+      ok: false,
+      data: null,
+      message: `AI re-analysis failed: ${error.message}`
+    });
+  }
 });
 
 // AI 분석 상태 조회
