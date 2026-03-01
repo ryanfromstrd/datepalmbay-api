@@ -2882,15 +2882,23 @@ app.get('/datepalm-bay/api/mvp/product/new/list', (req, res) => {
 
   console.log('Filter:', { pageNo, pageSize, sortType });
 
-  // Filter products created within 1 week and on sale
-  const oneWeekAgo = new Date();
-  oneWeekAgo.setDate(oneWeekAgo.getDate() - 7);
+  // Filter on-sale products created within 2 weeks
+  const twoWeeksAgo = new Date();
+  twoWeeksAgo.setDate(twoWeeksAgo.getDate() - 14);
 
-  let filteredProducts = products.filter(p => {
-    if (p.productSaleStatus !== true) return false;
+  const onSaleProducts = products.filter(p => p.productSaleStatus === true);
+
+  let filteredProducts = onSaleProducts.filter(p => {
     const createdDate = new Date(p.createdAt || Date.now());
-    return createdDate >= oneWeekAgo;
+    return createdDate >= twoWeeksAgo;
   });
+
+  // If no products within 2 weeks, show the 4 most recently registered products
+  if (filteredProducts.length === 0) {
+    filteredProducts = [...onSaleProducts]
+      .sort((a, b) => new Date(b.createdAt || 0) - new Date(a.createdAt || 0))
+      .slice(0, 4);
+  }
 
   // Sort
   if (sortType === 'NEWEST') {
