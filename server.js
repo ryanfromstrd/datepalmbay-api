@@ -1238,13 +1238,37 @@ app.get('/datepalm-bay/api/admin/member/list', (req, res) => {
   console.log('\n=== 회원 목록 조회 ===');
   const pageNo = parseInt(req.query.pageNo) || 0;
   const pageSize = parseInt(req.query.pageSize) || 10;
+  const { code, name, phone, country, status } = req.query;
+
+  // users를 source of truth로 사용하여 회원 목록 생성
+  let allMembers = users.map(u => ({
+    code: u.code,
+    name: u.name,
+    phone: u.phone || '',
+    email: u.email,
+    status: u.status || 'ACTIVE',
+    createAt: u.createAt,
+    birthDate: u.birthDate || '',
+    country: u.country || '',
+    memberLevel: u.memberLevel || 'BASIC',
+  }));
+
+  // 검색 필터 적용
+  if (code) allMembers = allMembers.filter(m => m.code.toLowerCase().includes(String(code).toLowerCase()));
+  if (name) allMembers = allMembers.filter(m => m.name.toLowerCase().includes(String(name).toLowerCase()));
+  if (phone) allMembers = allMembers.filter(m => m.phone.includes(String(phone)));
+  if (country) allMembers = allMembers.filter(m => m.country === country);
+  if (status) allMembers = allMembers.filter(m => m.status === status);
+
+  // 최신 가입순 정렬
+  allMembers.sort((a, b) => new Date(b.createAt).getTime() - new Date(a.createAt).getTime());
 
   const start = pageNo * pageSize;
   const end = start + pageSize;
-  const paginatedMembers = members.slice(start, end);
+  const paginatedMembers = allMembers.slice(start, end);
 
   console.log(`페이지: ${pageNo}, 크기: ${pageSize}`);
-  console.log(`총 ${members.length}개 회원 중 ${paginatedMembers.length}개 반환`);
+  console.log(`총 ${allMembers.length}개 회원 중 ${paginatedMembers.length}개 반환`);
 
   res.json({
     ok: true,
@@ -1254,12 +1278,12 @@ app.get('/datepalm-bay/api/admin/member/list', (req, res) => {
         pageNumber: pageNo,
         pageSize: pageSize
       },
-      totalElements: members.length,
-      totalPages: Math.ceil(members.length / pageSize),
+      totalElements: allMembers.length,
+      totalPages: Math.ceil(allMembers.length / pageSize),
       size: pageSize,
       number: pageNo,
       first: pageNo === 0,
-      last: pageNo >= Math.floor(members.length / pageSize),
+      last: pageNo >= Math.floor(allMembers.length / pageSize),
       numberOfElements: paginatedMembers.length
     },
     message: '회원 목록 조회 성공'
@@ -1272,9 +1296,10 @@ app.get('/datepalm-bay/api/admin/member/detail/:code', (req, res) => {
   const { code } = req.params;
   console.log(`회원 코드: ${code}`);
 
-  const member = members.find(m => m.code === code);
+  // users에서 직접 조회 (source of truth)
+  const user = users.find(u => u.code === code);
 
-  if (!member) {
+  if (!user) {
     return res.status(404).json({
       ok: false,
       data: null,
@@ -1282,12 +1307,20 @@ app.get('/datepalm-bay/api/admin/member/detail/:code', (req, res) => {
     });
   }
 
-  console.log('조회 성공:', member.name);
+  console.log('조회 성공:', user.name);
 
   res.json({
     ok: true,
     data: {
-      ...member,
+      code: user.code,
+      name: user.name,
+      phone: user.phone || '',
+      email: user.email,
+      status: user.status || 'ACTIVE',
+      createAt: user.createAt,
+      birthDate: user.birthDate || '',
+      country: user.country || '',
+      memberLevel: user.memberLevel || 'BASIC',
       memoList: []
     },
     message: '회원 상세 조회 성공'
