@@ -5921,7 +5921,7 @@ app.post('/datepalm-bay/mvp/google-login-oauth', (req, res) => {
         phone: '',
         email: payload.email,
         createAt: new Date().toISOString(),
-        status: 'ACTIVE',
+        status: 'PENDING_PROFILE',
         memberLevel: 'BASIC',
         birthMonth: 1,
         lastPurchaseDate: null,
@@ -5936,7 +5936,7 @@ app.post('/datepalm-bay/mvp/google-login-oauth', (req, res) => {
         name: newUser.name,
         phone: newUser.phone,
         email: newUser.email,
-        status: 'ACTIVE',
+        status: 'PENDING_PROFILE',
         createAt: newUser.createAt,
         birthDate: '',
         country: '',
@@ -5952,6 +5952,60 @@ app.post('/datepalm-bay/mvp/google-login-oauth', (req, res) => {
     console.error('Google token decode error:', e.message);
     res.status(401).json({ message: 'Invalid Google token' });
   }
+});
+
+// ======================================
+// Google OAuth 프로필 완성 (추가정보 입력)
+// ======================================
+app.put('/datepalm-bay/api/mvp/member/complete-profile', (req, res) => {
+  console.log('\n=== [Auth] Complete Profile ===');
+  const { userCode, country, birthDate, phone } = req.body;
+
+  if (!userCode) {
+    return res.json({ ok: false, data: null, message: 'userCode is required' });
+  }
+
+  const user = users.find(u => u.code === userCode);
+  if (!user) {
+    return res.json({ ok: false, data: null, message: 'User not found' });
+  }
+
+  // 프로필 정보 업데이트
+  user.country = country || '';
+  user.birthDate = birthDate || '';
+  user.phone = phone || '';
+  user.birthMonth = birthDate ? new Date(birthDate).getMonth() + 1 : 1;
+  user.status = 'ACTIVE';
+  user.memberLevel = 'BRONZE';
+
+  // members 배열도 동기화
+  const member = members.find(m => m.code === userCode);
+  if (member) {
+    member.country = user.country;
+    member.birthDate = user.birthDate;
+    member.phone = user.phone;
+    member.status = 'ACTIVE';
+  }
+
+  saveData();
+  console.log(`✅ Profile completed: ${user.name} (${user.email}), country=${country}, phone=${phone}`);
+
+  const accessToken = `google-oauth-${user.code}-${Date.now()}`;
+  res.json({
+    ok: true,
+    data: {
+      accessToken,
+      id: user.id,
+      code: user.code,
+      name: user.name,
+      email: user.email,
+      phone: user.phone,
+      birthDate: user.birthDate,
+      country: user.country,
+      status: user.status,
+    },
+    message: 'Profile completed successfully',
+  });
 });
 
 // 전역 에러 핸들러 (모든 라우트 이후에 배치)
