@@ -5895,7 +5895,7 @@ app.get('/datepalm-bay/api/admin/dashboard/stats', (req, res) => {
 // ======================================
 // Google OAuth Token Verification
 // ======================================
-app.post('/datepalm-bay/mvp/google-login-oauth', (req, res) => {
+app.post('/datepalm-bay/mvp/google-login-oauth', async (req, res) => {
   console.log('\n=== [Auth] Google OAuth Login ===');
   const { credential } = req.body;
 
@@ -5904,22 +5904,39 @@ app.post('/datepalm-bay/mvp/google-login-oauth', (req, res) => {
   }
 
   try {
-    const parts = credential.split('.');
-    const payload = JSON.parse(Buffer.from(parts[1], 'base64url').toString('utf8'));
-    console.log(`Google OAuth user: ${payload.name} (${payload.email})`);
+    let googlePayload;
 
-    let user = users.find(u => u.email === payload.email);
+    // Check if credential is a JWT (has 3 dot-separated parts) or an access_token
+    const parts = credential.split('.');
+    if (parts.length === 3) {
+      // JWT credential from GoogleLogin component
+      googlePayload = JSON.parse(Buffer.from(parts[1], 'base64url').toString('utf8'));
+    } else {
+      // Access token from useGoogleLogin hook - fetch user info from Google
+      console.log('Using access_token flow, fetching Google userinfo...');
+      const userInfoRes = await fetch('https://www.googleapis.com/oauth2/v3/userinfo', {
+        headers: { Authorization: `Bearer ${credential}` },
+      });
+      if (!userInfoRes.ok) {
+        return res.status(401).json({ message: 'Invalid Google access token' });
+      }
+      googlePayload = await userInfoRes.json();
+    }
+
+    console.log(`Google OAuth user: ${googlePayload.name} (${googlePayload.email})`);
+
+    let user = users.find(u => u.email === googlePayload.email);
     let isNewUser = false;
 
     if (!user) {
       isNewUser = true;
       const newUser = {
-        id: payload.email,
+        id: googlePayload.email,
         password: '',
         code: `USER-G-${Date.now()}`,
-        name: payload.name || payload.email.split('@')[0],
+        name: googlePayload.name || googlePayload.email.split('@')[0],
         phone: '',
-        email: payload.email,
+        email: googlePayload.email,
         createAt: new Date().toISOString(),
         status: 'PENDING_PROFILE',
         memberLevel: 'BASIC',
@@ -5927,8 +5944,8 @@ app.post('/datepalm-bay/mvp/google-login-oauth', (req, res) => {
         lastPurchaseDate: null,
         totalPurchaseCount: 0,
         totalPurchaseAmount: 0,
-        googleId: payload.sub,
-        picture: payload.picture,
+        googleId: googlePayload.sub,
+        picture: googlePayload.picture,
       };
       users.push(newUser);
       members.push({
