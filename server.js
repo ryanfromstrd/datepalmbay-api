@@ -12,10 +12,16 @@ const snsCollector = require('./services/snsReviewCollector');
 const reviewSummarizer = require('./services/reviewSummarizer');
 // Claude AI 리뷰 분석 서비스
 const claudeReviewSummarizer = require('./services/claudeReviewSummarizer');
+// SKIN OS 성분 분석 서비스
+const skinOS = require('./services/skinOS');
+// SKIN OS Vision — Claude Vision 피부 분석 서비스
+const visionSkin = require('./services/visionSkin');
 // PayPal 결제 서비스
 const paypalService = require('./services/paypal');
 // FedEx 물류 서비스
 const fedexService = require('./services/fedex');
+// Aramex 물류 서비스
+const aramexService = require('./services/aramex');
 // MySQL Database 서비스
 const database = require('./services/database');
 // Twilio Verify 서비스 — 환경변수 정규식 정제 (비허용 문자 제거)
@@ -75,7 +81,7 @@ async function waitForMySQL(maxRetries = 5) {
 // 데이터 로드 함수 (MySQL → JSON 파일 → 빈 저장소)
 // ========================================
 async function loadData() {
-  const emptyData = { products: [], snsReviews: [], brands: [], orders: null, members: null, users: null, userCoupons: null, coupons: null, groupBuyTeams: [], events: null, snsReviewOverrides: [], productInsights: [], aiFeedbackHistory: [] };
+  const emptyData = { products: [], snsReviews: [], brands: [], orders: null, members: null, users: null, userCoupons: null, coupons: null, groupBuyTeams: [], events: null, snsReviewOverrides: [], productInsights: [], aiFeedbackHistory: [], skinProfiles: [] };
 
   // 1단계: MySQL에서 로드 시도
   if (_useMySQL) {
@@ -181,6 +187,7 @@ async function _saveDataImpl() {
     snsReviewOverrides: snsReviewOverrides,
     productInsights: productInsights,
     aiFeedbackHistory: aiFeedbackHistory,
+    skinProfiles: skinProfiles,
   };
 
   if (_useMySQL) {
@@ -1151,7 +1158,9 @@ app.get('/datepalm-bay/api/admin/product/detail/:code', (req, res) => {
     shippingCostType: product.shippingCostType || 'FREE',
     shippingCost: product.shippingCost || 0,
     freeShippingThreshold: product.freeShippingThreshold || 0,
-    brand: product.brand || ''
+    brand: product.brand || '',
+    // SKIN OS 성분 분석
+    ingredientAnalysis: product.ingredientAnalysis || null
   };
 
   console.log('조회 성공:', product.productName);
@@ -3435,6 +3444,8 @@ let snsReviews = [];
 let snsReviewOverrides = [];
 let productInsights = [];
 let aiFeedbackHistory = [];
+// SKIN OS Vision — 피부 프로필 저장소
+let skinProfiles = [];
 
 // SNS 수집기에 참조 및 저장 콜백 설정
 snsCollector.setReferences(snsReviews, products, saveData);
@@ -4315,6 +4326,14 @@ app.post('/datepalm-bay/api/mvp/order/create', async (req, res) => {
     fedexPickupDate: null,
     fedexPickupTime: null,
     fedexTradeDocuments: [],
+    // Aramex 물류 필드
+    aramexTrackingNumber: null,
+    aramexShipmentId: null,
+    aramexLabelUrl: null,
+    aramexServiceType: null,
+    aramexShippedAt: null,
+    aramexPickupId: null,
+    aramexPickupDate: null,
     courier: null,
     createdAt: new Date().toISOString()
   };
@@ -5384,6 +5403,219 @@ app.post('/datepalm-bay/api/mvp/coupons/use/:code', (req, res) => {
 });
 
 // ======================================
+// SKIN OS 성분 분석 API
+// ======================================
+
+// GET /datepalm-bay/api/admin/product/:productCode/ingredient-analysis
+// 현재 성분 분석 결과 조회 (없으면 result: null)
+app.get('/datepalm-bay/api/admin/product/:productCode/ingredient-analysis', (req, res) => {
+  console.log('\n=== [SKIN OS] 성분 분석 결과 조회 ===');
+  const { productCode } = req.params;
+  console.log(`  상품: ${productCode}`);
+
+  const result = skinOS.getAnalysis(productCode);
+  if (!result.ok) {
+    return res.status(404).json({ ok: false, data: null, message: result.message });
+  }
+
+  res.json({ ok: true, data: result.data, message: '성분 분석 결과 조회 성공' });
+});
+
+// POST /datepalm-bay/api/admin/product/:productCode/ingredient-analysis/analyze
+// Claude AI 성분 분석 실행
+app.post('/datepalm-bay/api/admin/product/:productCode/ingredient-analysis/analyze', async (req, res) => {
+  console.log('\n=== [SKIN OS] 성분 분석 실행 ===');
+  const { productCode } = req.params;
+  const { inciText, adminDirection } = req.body;
+
+  console.log(`  상품: ${productCode}`);
+  console.log(`  INCI 길이: ${(inciText || '').length}자`);
+
+  if (!inciText || !inciText.trim()) {
+    return res.status(400).json({ ok: false, data: null, message: 'INCI 성분 목록이 필요합니다.' });
+  }
+
+  const result = await skinOS.analyzeIngredients(productCode, inciText, adminDirection);
+
+  if (!result.ok) {
+    return res.status(500).json({ ok: false, data: null, message: result.message, rawResponse: result.rawResponse });
+  }
+
+  res.json({ ok: true, data: result.data, message: '성분 분석이 완료되었습니다.' });
+});
+
+// PUT /datepalm-bay/api/admin/product/:productCode/ingredient-analysis/override
+// Admin 수동 편집 결과 저장
+app.put('/datepalm-bay/api/admin/product/:productCode/ingredient-analysis/override', (req, res) => {
+  console.log('\n=== [SKIN OS] 수동 편집 저장 ===');
+  const { productCode } = req.params;
+  const { result, adminDirection } = req.body;
+
+  if (!result) {
+    return res.status(400).json({ ok: false, data: null, message: '수정된 분석 결과가 필요합니다.' });
+  }
+
+  const saveResult = skinOS.saveOverride(productCode, result, adminDirection);
+  if (!saveResult.ok) {
+    return res.status(404).json({ ok: false, data: null, message: saveResult.message });
+  }
+
+  res.json({ ok: true, data: saveResult.data, message: '수동 편집이 저장되었습니다.' });
+});
+
+// DELETE /datepalm-bay/api/admin/product/:productCode/ingredient-analysis/override
+// 수동 편집 해제 (isManualOverride: false 복원)
+app.delete('/datepalm-bay/api/admin/product/:productCode/ingredient-analysis/override', (req, res) => {
+  console.log('\n=== [SKIN OS] 수동 편집 해제 ===');
+  const { productCode } = req.params;
+
+  const resetResult = skinOS.resetOverride(productCode);
+  if (!resetResult.ok) {
+    return res.status(404).json({ ok: false, data: null, message: resetResult.message });
+  }
+
+  res.json({ ok: true, data: resetResult.data, message: '수동 편집이 해제되었습니다.' });
+});
+
+// GET /datepalm-bay/api/mvp/product/:productCode/ingredient-analysis
+// 공개 엔드포인트 — 고객 FE용 (Phase 2)
+app.get('/datepalm-bay/api/mvp/product/:productCode/ingredient-analysis', (req, res) => {
+  const { productCode } = req.params;
+  const result = skinOS.getPublicAnalysis(productCode);
+
+  if (!result.ok) {
+    return res.status(404).json({ ok: false, data: null, message: result.message });
+  }
+
+  res.json({ ok: true, data: result.data, message: '성분 분석 정보 조회 성공' });
+});
+
+// ======================================
+// SKIN OS Vision — 피부 분석 API
+// ======================================
+
+// POST /datepalm-bay/api/mvp/skin-os/analyze
+// 피부 사진 업로드 → Claude Vision 분석
+app.post('/datepalm-bay/api/mvp/skin-os/analyze', upload.single('photo'), async (req, res) => {
+  console.log('\n=== [SKIN OS Vision] 피부 분석 요청 ===');
+
+  const authHeader = req.headers.authorization;
+  let userId = null;
+  if (authHeader && authHeader.startsWith('Bearer ')) {
+    userId = extractUserIdFromToken(authHeader.substring(7));
+  }
+
+  if (!userId) {
+    if (req.file && req.file.path) {
+      try { require('fs').unlinkSync(req.file.path); } catch (e) { /* ignore */ }
+    }
+    return res.status(401).json({ ok: false, data: null, message: '로그인이 필요합니다.' });
+  }
+
+  if (!req.file) {
+    return res.status(400).json({ ok: false, data: null, message: '사진 파일이 업로드되지 않았습니다.' });
+  }
+
+  const consentToStore = req.body.consentToStore === 'true';
+  console.log(`  userId: ${userId}, consentToStore: ${consentToStore}`);
+
+  const result = await visionSkin.analyzePhoto(userId, req.file, consentToStore);
+
+  if (!result.ok) {
+    return res.status(400).json({ ok: false, data: null, message: result.message });
+  }
+
+  res.json({ ok: true, data: result.data, message: '피부 분석이 완료되었습니다.' });
+});
+
+// GET /datepalm-bay/api/mvp/skin-os/profile
+// 사용자 피부 프로필 조회
+app.get('/datepalm-bay/api/mvp/skin-os/profile', (req, res) => {
+  console.log('\n=== [SKIN OS Vision] 프로필 조회 ===');
+
+  const authHeader = req.headers.authorization;
+  let userId = null;
+  if (authHeader && authHeader.startsWith('Bearer ')) {
+    userId = extractUserIdFromToken(authHeader.substring(7));
+  }
+
+  if (!userId) {
+    return res.status(401).json({ ok: false, data: null, message: '로그인이 필요합니다.' });
+  }
+
+  const result = visionSkin.getProfile(userId);
+  res.json({ ok: true, data: result.data, message: result.data ? '프로필 조회 성공' : '분석 결과가 없습니다.' });
+});
+
+// GET /datepalm-bay/api/mvp/skin-os/recommendations
+// 개인화 제품 추천 목록
+app.get('/datepalm-bay/api/mvp/skin-os/recommendations', (req, res) => {
+  console.log('\n=== [SKIN OS Vision] 제품 추천 조회 ===');
+
+  const authHeader = req.headers.authorization;
+  let userId = null;
+  if (authHeader && authHeader.startsWith('Bearer ')) {
+    userId = extractUserIdFromToken(authHeader.substring(7));
+  }
+
+  if (!userId) {
+    return res.status(401).json({ ok: false, data: null, message: '로그인이 필요합니다.' });
+  }
+
+  const result = visionSkin.getRecommendations(userId);
+
+  if (!result.ok) {
+    return res.status(400).json({ ok: false, data: null, message: result.message });
+  }
+
+  res.json({ ok: true, data: result.data, message: `${result.data.length}개 추천 제품` });
+});
+
+// GET /datepalm-bay/api/mvp/skin-os/recommendations/:productCode/compatibility
+// 단일 제품 호환성 점수 + 근거
+app.get('/datepalm-bay/api/mvp/skin-os/recommendations/:productCode/compatibility', (req, res) => {
+  const { productCode } = req.params;
+  console.log(`\n=== [SKIN OS Vision] 제품 호환성 조회: ${productCode} ===`);
+
+  const authHeader = req.headers.authorization;
+  let userId = null;
+  if (authHeader && authHeader.startsWith('Bearer ')) {
+    userId = extractUserIdFromToken(authHeader.substring(7));
+  }
+
+  if (!userId) {
+    return res.status(401).json({ ok: false, data: null, message: '로그인이 필요합니다.' });
+  }
+
+  const result = visionSkin.getProductCompatibility(userId, productCode);
+  res.json({ ok: true, data: result.data, message: result.data ? '호환성 조회 성공' : '분석 결과가 없습니다.' });
+});
+
+// DELETE /datepalm-bay/api/mvp/skin-os/profile
+// 피부 프로필 삭제 (GDPR)
+app.delete('/datepalm-bay/api/mvp/skin-os/profile', (req, res) => {
+  console.log('\n=== [SKIN OS Vision] 프로필 삭제 ===');
+
+  const authHeader = req.headers.authorization;
+  let userId = null;
+  if (authHeader && authHeader.startsWith('Bearer ')) {
+    userId = extractUserIdFromToken(authHeader.substring(7));
+  }
+
+  if (!userId) {
+    return res.status(401).json({ ok: false, data: null, message: '로그인이 필요합니다.' });
+  }
+
+  const result = visionSkin.deleteProfile(userId);
+
+  if (!result.ok) {
+    return res.status(404).json({ ok: false, data: null, message: result.message });
+  }
+
+  res.json({ ok: true, data: null, message: '피부 프로필이 삭제되었습니다.' });
+});
+
+// ======================================
 // FedEx 물류 API
 // ======================================
 
@@ -5697,6 +5929,163 @@ app.put('/datepalm-bay/api/admin/fedex/cancel-pickup', async (req, res) => {
     res.json({ ok: true, data: result, message: 'Pickup cancelled successfully' });
   } catch (error) {
     console.error('FedEx pickup cancel error:', error.message);
+    res.status(500).json({ ok: false, data: null, message: error.message || 'Failed to cancel pickup' });
+  }
+});
+
+// ======================================
+// Aramex 물류 API
+// ======================================
+
+// POST /datepalm-bay/api/aramex/rates - 배송비 견적
+app.post('/datepalm-bay/api/aramex/rates', async (req, res) => {
+  console.log('\n=== [Aramex] 배송비 견적 조회 ===');
+  const { recipient, packages, productGroup, productType } = req.body.data || req.body;
+
+  if (!recipient || !packages || !packages.length) {
+    return res.status(400).json({ ok: false, data: null, message: 'recipient and packages are required' });
+  }
+
+  try {
+    const result = await aramexService.getRates({ recipient, packages, productGroup, productType });
+    res.json({ ok: true, data: result, message: 'Rates retrieved successfully' });
+  } catch (error) {
+    console.error('Aramex rates error:', error.message);
+    res.status(500).json({ ok: false, data: null, message: error.message || 'Failed to get rates' });
+  }
+});
+
+// POST /datepalm-bay/api/admin/aramex/create-shipment - 배송 생성
+app.post('/datepalm-bay/api/admin/aramex/create-shipment', async (req, res) => {
+  console.log('\n=== [Aramex] 배송 생성 ===');
+  const { orderCode, recipient, packages, productType, serviceType, description, reference, codAmount } = req.body.data || req.body;
+
+  if (!orderCode || !recipient || !packages || !packages.length) {
+    return res.status(400).json({ ok: false, data: null, message: 'orderCode, recipient, and packages are required' });
+  }
+
+  try {
+    const result = await aramexService.createShipment({ orderCode, recipient, packages, productType, serviceType, description, reference, codAmount });
+
+    const order = customerOrders.find(o => o.orderCode === orderCode);
+    if (order) {
+      order.aramexTrackingNumber = result.trackingNumber;
+      order.aramexShipmentId = result.shipmentId;
+      order.aramexLabelUrl = result.labelUrl;
+      order.aramexServiceType = serviceType || 'PPX';
+      order.aramexShippedAt = new Date().toISOString();
+      order.deliveryStatus = '배송중';
+      saveData();
+    }
+
+    res.json({ ok: true, data: result, message: 'Shipment created successfully' });
+  } catch (error) {
+    console.error('Aramex create shipment error:', error.message);
+    res.status(500).json({ ok: false, data: null, message: error.message || 'Failed to create shipment' });
+  }
+});
+
+// GET /datepalm-bay/api/admin/aramex/label/:orderCode - 라벨 URL 조회
+app.get('/datepalm-bay/api/admin/aramex/label/:orderCode', async (req, res) => {
+  console.log('\n=== [Aramex] 라벨 URL 조회 ===');
+  const { orderCode } = req.params;
+
+  const order = customerOrders.find(o => o.orderCode === orderCode);
+  if (!order || !order.aramexLabelUrl) {
+    return res.status(404).json({ ok: false, data: null, message: 'Aramex label not found for this order' });
+  }
+
+  res.json({ ok: true, data: { labelUrl: order.aramexLabelUrl, trackingNumber: order.aramexTrackingNumber }, message: 'Label URL retrieved' });
+});
+
+// POST /datepalm-bay/api/aramex/track - 배송 추적
+app.post('/datepalm-bay/api/aramex/track', async (req, res) => {
+  console.log('\n=== [Aramex] 배송 추적 ===');
+  const { trackingNumbers } = req.body.data || req.body;
+
+  if (!trackingNumbers || !trackingNumbers.length) {
+    return res.status(400).json({ ok: false, data: null, message: 'trackingNumbers array is required' });
+  }
+
+  try {
+    const result = await aramexService.trackShipment(trackingNumbers);
+    res.json({ ok: true, data: result, message: 'Tracking info retrieved successfully' });
+  } catch (error) {
+    console.error('Aramex track error:', error.message);
+    res.status(500).json({ ok: false, data: null, message: error.message || 'Failed to track shipment' });
+  }
+});
+
+// POST /datepalm-bay/api/aramex/validate-address - 주소 검증
+app.post('/datepalm-bay/api/aramex/validate-address', async (req, res) => {
+  console.log('\n=== [Aramex] 주소 검증 ===');
+  const { city, countryCode, postalCode } = req.body.data || req.body;
+
+  if (!city || !countryCode) {
+    return res.status(400).json({ ok: false, data: null, message: 'city and countryCode are required' });
+  }
+
+  try {
+    const result = await aramexService.validateAddress({ city, countryCode, postalCode });
+    res.json({ ok: true, data: result, message: 'Address validation complete' });
+  } catch (error) {
+    console.error('Aramex address validation error:', error.message);
+    res.status(500).json({ ok: false, data: null, message: error.message || 'Failed to validate address' });
+  }
+});
+
+// POST /datepalm-bay/api/admin/aramex/schedule-pickup - 픽업 예약
+app.post('/datepalm-bay/api/admin/aramex/schedule-pickup', async (req, res) => {
+  console.log('\n=== [Aramex] 픽업 예약 ===');
+  const { pickupDate, readyTime, closeTime, totalWeight, totalPieces, orderCode } = req.body.data || req.body;
+
+  if (!pickupDate || !readyTime || !closeTime) {
+    return res.status(400).json({ ok: false, data: null, message: 'pickupDate, readyTime, and closeTime are required' });
+  }
+
+  try {
+    const result = await aramexService.schedulePickup({ pickupDate, readyTime, closeTime, totalWeight, totalPieces });
+
+    if (orderCode) {
+      const order = customerOrders.find(o => o.orderCode === orderCode);
+      if (order) {
+        order.aramexPickupId = result.pickupId;
+        order.aramexPickupDate = pickupDate;
+        saveData();
+      }
+    }
+
+    res.json({ ok: true, data: result, message: 'Pickup scheduled successfully' });
+  } catch (error) {
+    console.error('Aramex pickup schedule error:', error.message);
+    res.status(500).json({ ok: false, data: null, message: error.message || 'Failed to schedule pickup' });
+  }
+});
+
+// PUT /datepalm-bay/api/admin/aramex/cancel-pickup - 픽업 취소
+app.put('/datepalm-bay/api/admin/aramex/cancel-pickup', async (req, res) => {
+  console.log('\n=== [Aramex] 픽업 취소 ===');
+  const { pickupId, orderCode } = req.body.data || req.body;
+
+  if (!pickupId) {
+    return res.status(400).json({ ok: false, data: null, message: 'pickupId is required' });
+  }
+
+  try {
+    const result = await aramexService.cancelPickup(pickupId);
+
+    if (orderCode) {
+      const order = customerOrders.find(o => o.orderCode === orderCode);
+      if (order) {
+        order.aramexPickupId = null;
+        order.aramexPickupDate = null;
+        saveData();
+      }
+    }
+
+    res.json({ ok: true, data: result, message: 'Pickup cancelled successfully' });
+  } catch (error) {
+    console.error('Aramex pickup cancel error:', error.message);
     res.status(500).json({ ok: false, data: null, message: error.message || 'Failed to cancel pickup' });
   }
 });
@@ -6076,6 +6465,7 @@ async function startServer() {
   if (loadedData.snsReviewOverrides) snsReviewOverrides = loadedData.snsReviewOverrides;
   if (loadedData.productInsights) productInsights = loadedData.productInsights;
   if (loadedData.aiFeedbackHistory) aiFeedbackHistory = loadedData.aiFeedbackHistory;
+  if (loadedData.skinProfiles && loadedData.skinProfiles.length > 0) skinProfiles = loadedData.skinProfiles;
 
   // 4. 더미/테스트 주문 데이터 정리
   const testOrderIds = ['ORDER-TEST-FEDEX-001', 'ORDER-TEST-002', 'ORDER-TEST-FEDEX-003'];
@@ -6095,6 +6485,19 @@ async function startServer() {
     productInsights,
     aiFeedbackHistory,
     snsReviewOverrides,
+    onSave: saveData,
+  });
+
+  // 7. SKIN OS 성분 분석기 초기화
+  skinOS.initialize({
+    productsRef: products,
+    onSave: saveData,
+  });
+
+  // 8. SKIN OS Vision 피부 분석기 초기화
+  visionSkin.initialize({
+    productsRef: products,
+    skinProfilesRef: skinProfiles,
     onSave: saveData,
   });
 
