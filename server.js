@@ -147,6 +147,7 @@ async function loadData() {
         coupons: data.coupons || null,
         groupBuyTeams: data.groupBuyTeams || [],
         events: data.events || null,
+        banners: data.banners || [],
       };
     } catch (e) {
       console.error('❌ JSON 데이터 로드 실패:', e.message);
@@ -180,6 +181,7 @@ async function _saveDataImpl() {
     coupons: coupons,
     groupBuyTeams: groupBuyTeams,
     events: events,
+    banners: banners,
     snsReviewOverrides: snsReviewOverrides,
     productInsights: productInsights,
     aiFeedbackHistory: aiFeedbackHistory,
@@ -3428,6 +3430,92 @@ app.delete('/datepalm-bay/api/admin/event/delete/:code', (req, res) => {
 });
 
 // ========================================
+// Banner API (홈 캐러셀 배너 관리)
+// ========================================
+
+let banners = [];
+
+// Public: 프론트엔드에서 활성 배너 목록 조회
+app.get('/datepalm-bay/api/mvp/banner/list', (req, res) => {
+  const active = banners
+    .filter(b => b.status === 'ACTIVE')
+    .sort((a, b) => a.order - b.order);
+  res.json({ ok: true, data: active });
+});
+
+// Admin: 전체 배너 목록
+app.get('/datepalm-bay/api/admin/banner/list', (req, res) => {
+  const sorted = [...banners].sort((a, b) => a.order - b.order);
+  res.json({ ok: true, data: sorted });
+});
+
+// Admin: 배너 생성 (이미지 업로드 포함)
+app.post('/datepalm-bay/api/admin/banner/create', upload.single('image'), (req, res) => {
+  const baseUrl = getBaseUrl(req);
+  const { title, linkUrl, order, status } = req.body;
+
+  const imageUrl = req.file
+    ? `${baseUrl}/uploads/${req.file.filename}`
+    : null;
+
+  if (!imageUrl) {
+    return res.status(400).json({ ok: false, data: null, message: '이미지를 업로드해주세요.' });
+  }
+
+  const newBanner = {
+    code: `BNR-${Date.now()}`,
+    title: title || '',
+    imageUrl,
+    linkUrl: linkUrl || '',
+    order: parseInt(order) || banners.length + 1,
+    status: status || 'ACTIVE',
+    createdAt: new Date().toISOString(),
+  };
+
+  banners.push(newBanner);
+  saveData();
+
+  res.json({ ok: true, data: newBanner });
+});
+
+// Admin: 배너 수정
+app.put('/datepalm-bay/api/admin/banner/edit', upload.single('image'), (req, res) => {
+  const baseUrl = getBaseUrl(req);
+  const { code, title, linkUrl, order, status } = req.body;
+
+  const idx = banners.findIndex(b => b.code === code);
+  if (idx === -1) return res.status(404).json({ ok: false, data: null, message: '배너를 찾을 수 없습니다.' });
+
+  const imageUrl = req.file
+    ? `${baseUrl}/uploads/${req.file.filename}`
+    : banners[idx].imageUrl;
+
+  banners[idx] = {
+    ...banners[idx],
+    title: title !== undefined ? title : banners[idx].title,
+    imageUrl,
+    linkUrl: linkUrl !== undefined ? linkUrl : banners[idx].linkUrl,
+    order: order !== undefined ? parseInt(order) : banners[idx].order,
+    status: status !== undefined ? status : banners[idx].status,
+    updatedAt: new Date().toISOString(),
+  };
+
+  saveData();
+  res.json({ ok: true, data: banners[idx] });
+});
+
+// Admin: 배너 삭제
+app.delete('/datepalm-bay/api/admin/banner/delete/:code', (req, res) => {
+  const { code } = req.params;
+  const idx = banners.findIndex(b => b.code === code);
+  if (idx === -1) return res.status(404).json({ ok: false, data: null, message: '배너를 찾을 수 없습니다.' });
+
+  banners.splice(idx, 1);
+  saveData();
+  res.json({ ok: true, data: null });
+});
+
+// ========================================
 // SNS 리뷰 Mock 데이터 및 API
 // ========================================
 
@@ -6236,6 +6324,7 @@ async function startServer() {
   if (loadedData.userCoupons) userCoupons = loadedData.userCoupons;
   if (loadedData.groupBuyTeams && loadedData.groupBuyTeams.length > 0) groupBuyTeams = loadedData.groupBuyTeams;
   if (loadedData.events) events = loadedData.events;
+  if (loadedData.banners) banners = loadedData.banners;
   if (loadedData.coupons) coupons = loadedData.coupons;
   if (loadedData.snsReviews && loadedData.snsReviews.length > 0) snsReviews = loadedData.snsReviews;
   if (loadedData.orders) customerOrders = loadedData.orders;
