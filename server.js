@@ -5523,7 +5523,8 @@ app.post('/datepalm-bay/api/fedex/rates', async (req, res) => {
 // FedEx 배송 생성 + 라벨 발급 (Admin)
 app.post('/datepalm-bay/api/admin/fedex/create-shipment', async (req, res) => {
   console.log('\n=== [FedEx] 배송 생성 ===');
-  const { orderCode, serviceType, packages, labelFormat } = req.body.data || req.body;
+  const requestData = req.body.data || req.body;
+  const { orderCode, serviceType, packages, labelFormat, recipientCity, recipientState, recipientCountry } = requestData;
 
   if (!orderCode) {
     return res.status(400).json({
@@ -5555,15 +5556,20 @@ app.post('/datepalm-bay/api/admin/fedex/create-shipment', async (req, res) => {
   console.log(`  수신자: ${order.recipientName}`);
   console.log(`  서비스: ${serviceType || 'FEDEX_INTERNATIONAL_PRIORITY'}`);
 
-  // 수신자 주소 자동 추출
+  // FedEx API 포맷으로 수신자 구성
   const recipient = {
-    name: order.recipientName,
-    phone: order.recipientContact,
-    streetLines: [order.address, order.detailAddress].filter(Boolean),
-    postalCode: order.postalCode,
-    city: req.body.data?.recipientCity || '',
-    stateOrProvince: req.body.data?.recipientState || '',
-    countryCode: req.body.data?.recipientCountry || 'US'
+    contact: {
+      personName: order.recipientName || 'Recipient',
+      phoneNumber: (order.recipientContact || '').replace(/[^0-9]/g, ''),
+    },
+    address: {
+      streetLines: [order.address, order.detailAddress].filter(Boolean),
+      city: recipientCity || '',
+      stateOrProvinceCode: recipientState || '',
+      postalCode: order.postalCode || '',
+      countryCode: recipientCountry || 'US',
+      residential: true,
+    },
   };
 
   const shipmentPackages = packages || [{

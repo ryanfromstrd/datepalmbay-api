@@ -226,7 +226,10 @@ async function createShipment({ recipient, packages, serviceType, labelFormat = 
 
   const shipper = getShipperInfo();
 
+  const isInternational = recipient?.address?.countryCode !== (process.env.FEDEX_SHIPPER_COUNTRY || 'KR');
+
   const payload = {
+    labelResponseOptions: 'LABEL',
     accountNumber: { value: accountNumber },
     requestedShipment: {
       shipper,
@@ -241,6 +244,22 @@ async function createShipment({ recipient, packages, serviceType, labelFormat = 
         imageType: labelFormat,
         labelStockType: labelFormat === 'PDF' ? 'PAPER_85X11_TOP_HALF_LABEL' : 'STOCK_4X6',
       },
+      ...(isInternational && {
+        customsClearanceDetail: {
+          dutiesPayment: { paymentType: 'SENDER' },
+          totalCustomsValue: { amount: 50, currency: 'USD' },
+          commodities: [{
+            description: 'Skincare Cosmetics',
+            countryOfManufacture: 'KR',
+            harmonizedCode: '330499',
+            weight: { units: 'KG', value: packages.reduce((s, p) => s + (p.weight || 1), 0) },
+            quantity: 1,
+            quantityUnits: 'PCS',
+            unitPrice: { amount: 50, currency: 'USD' },
+            customsValue: { amount: 50, currency: 'USD' },
+          }],
+        },
+      }),
       requestedPackageLineItems: packages.map((pkg, index) => ({
         sequenceNumber: index + 1,
         weight: { units: 'KG', value: pkg.weight },
