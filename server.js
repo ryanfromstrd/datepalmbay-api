@@ -5579,12 +5579,26 @@ app.post('/datepalm-bay/api/admin/fedex/create-shipment', async (req, res) => {
     height: 15
   }];
 
+  // 실제 주문 데이터로 세관 신고 정보 구성
+  const orderTotalUSD = order.amount || (order.totalAmount) || 50;
+  const productDescription = order.orderName || order.productName || 'Skincare Cosmetics';
+  const orderQuantity = order.quantity || 1;
+  const unitPriceUSD = orderTotalUSD / orderQuantity;
+
+  const customsInfo = {
+    totalValueUSD: orderTotalUSD,
+    description: productDescription,
+    quantity: orderQuantity,
+    unitPriceUSD,
+  };
+
   try {
     const result = await fedexService.createShipment({
       recipient,
       packages: shipmentPackages,
       serviceType: serviceType || 'FEDEX_INTERNATIONAL_PRIORITY',
-      labelFormat: labelFormat || 'PDF'
+      labelFormat: labelFormat || 'PDF',
+      customsInfo,
     });
 
     // 주문 데이터 업데이트

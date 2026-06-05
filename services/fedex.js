@@ -216,7 +216,7 @@ async function getRates({ recipient, packages, serviceType }) {
  * @param {string} params.serviceType - FedEx service type
  * @param {string} [params.labelFormat='PDF'] - Label format (PDF, PNG, ZPLII)
  */
-async function createShipment({ recipient, packages, serviceType, labelFormat = 'PDF' }) {
+async function createShipment({ recipient, packages, serviceType, labelFormat = 'PDF', customsInfo = {} }) {
   const accessToken = await getAccessToken();
   const accountNumber = process.env.FEDEX_ACCOUNT_NUMBER;
 
@@ -247,16 +247,25 @@ async function createShipment({ recipient, packages, serviceType, labelFormat = 
       ...(isInternational && {
         customsClearanceDetail: {
           dutiesPayment: { paymentType: 'SENDER' },
-          totalCustomsValue: { amount: 50, currency: 'USD' },
+          totalCustomsValue: {
+            amount: customsInfo.totalValueUSD || 50,
+            currency: 'USD',
+          },
           commodities: [{
-            description: 'Skincare Cosmetics',
+            description: (customsInfo.description || 'Skincare Cosmetics').substring(0, 100),
             countryOfManufacture: 'KR',
             harmonizedCode: '330499',
             weight: { units: 'KG', value: packages.reduce((s, p) => s + (p.weight || 1), 0) },
-            quantity: 1,
+            quantity: customsInfo.quantity || 1,
             quantityUnits: 'PCS',
-            unitPrice: { amount: 50, currency: 'USD' },
-            customsValue: { amount: 50, currency: 'USD' },
+            unitPrice: {
+              amount: parseFloat((customsInfo.unitPriceUSD || 50).toFixed(2)),
+              currency: 'USD',
+            },
+            customsValue: {
+              amount: parseFloat((customsInfo.totalValueUSD || 50).toFixed(2)),
+              currency: 'USD',
+            },
           }],
         },
       }),
