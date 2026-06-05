@@ -5561,6 +5561,7 @@ app.post('/datepalm-bay/api/admin/fedex/create-shipment', async (req, res) => {
     contact: {
       personName: order.recipientName || 'Recipient',
       phoneNumber: (order.recipientContact || '').replace(/[^0-9]/g, ''),
+      ...(order.ordererEmail && { emailAddress: order.ordererEmail }),
     },
     address: {
       streetLines: [order.address, order.detailAddress].filter(Boolean),
