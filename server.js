@@ -4289,6 +4289,7 @@ app.post('/datepalm-bay/api/mvp/order/create', async (req, res) => {
     ordererEmail,
     recipientName,
     recipientContact,
+    recipientEmail,
     postalCode,
     address,
     detailAddress,
@@ -4379,6 +4380,7 @@ app.post('/datepalm-bay/api/mvp/order/create', async (req, res) => {
     ordererEmail,
     recipientName,
     recipientContact,
+    recipientEmail: recipientEmail || ordererEmail || null,
     postalCode,
     address,
     detailAddress,
@@ -5557,11 +5559,12 @@ app.post('/datepalm-bay/api/admin/fedex/create-shipment', async (req, res) => {
   console.log(`  서비스: ${serviceType || 'FEDEX_INTERNATIONAL_PRIORITY'}`);
 
   // FedEx API 포맷으로 수신자 구성
+  const fedexEmail = order.recipientEmail || order.ordererEmail || null;
   const recipient = {
     contact: {
       personName: order.recipientName || 'Recipient',
       phoneNumber: (order.recipientContact || '').replace(/[^0-9]/g, ''),
-      ...(order.ordererEmail && { emailAddress: order.ordererEmail }),
+      ...(fedexEmail && { emailAddress: fedexEmail }),
     },
     address: {
       streetLines: [order.address, order.detailAddress].filter(Boolean),
