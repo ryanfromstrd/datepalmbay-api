@@ -185,6 +185,7 @@ async function _saveDataImpl() {
     snsReviewOverrides: snsReviewOverrides,
     productInsights: productInsights,
     aiFeedbackHistory: aiFeedbackHistory,
+    b2bUsers: b2bUsers,
   };
 
   if (_useMySQL) {
@@ -388,6 +389,21 @@ const handleMulterError = (err, req, res, next) => {
 // 데이터 변수 선언 (startServer()에서 MySQL/JSON으로부터 로드하여 재할당)
 let products = [];
 let brands = [];
+let b2bUsers = [];
+
+// B2B 세션 스토어 (in-memory, 서버 재시작 시 초기화 → 재로그인 필요)
+const b2bSessions = new Map(); // token → { userId, companyName, discountPercent }
+
+function generateB2BToken() {
+  return `b2b_${Date.now()}_${Math.random().toString(36).substring(2, 10)}`;
+}
+
+function validateB2BToken(req) {
+  const auth = req.headers['authorization'] || req.headers['x-b2b-token'];
+  const token = auth ? auth.replace(/^Bearer\s+/i, '') : null;
+  if (!token) return null;
+  return b2bSessions.get(token) || null;
+}
 
 // Mock 문의 데이터 저장소
 const contacts = [
@@ -1549,6 +1565,154 @@ app.put('/datepalm-bay/api/admin/order/edit', (req, res) => {
   console.log(`주문 수정 완료: ${orderCode}`);
 
   res.json({ ok: true, data: null, message: '주문 수정 완료' });
+});
+
+// ========================================
+// B2B API (고객 B2B 포털)
+// ========================================
+
+// B2B 로그인
+app.post('/datepalm-bay/api/b2b/login', (req, res) => {
+  const { id, password } = req.body;
+  if (!id || !password) {
+    return res.status(400).json({ ok: false, data: null, message: 'ID and password are required.' });
+  }
+
+  const user = b2bUsers.find(u => u.id === id && u.password === password && u.isActive !== false);
+  if (!user) {
+    return res.status(401).json({ ok: false, data: null, message: 'Invalid credentials or account is inactive.' });
+  }
+
+  const token = generateB2BToken();
+  b2bSessions.set(token, {
+    userId: user.id,
+    companyName: user.companyName,
+    discountPercent: user.discountPercent || 0,
+  });
+
+  console.log(`✅ B2B 로그인: ${user.id} (${user.companyName})`);
+
+  res.json({
+    ok: true,
+    data: {
+      token,
+      userId: user.id,
+      companyName: user.companyName,
+      discountPercent: user.discountPercent || 0,
+      contactEmail: user.contactEmail || '',
+    },
+    message: 'Login successful',
+  });
+});
+
+// B2B 로그아웃
+app.post('/datepalm-bay/api/b2b/logout', (req, res) => {
+  const session = validateB2BToken(req);
+  if (session) {
+    const auth = req.headers['authorization'] || req.headers['x-b2b-token'];
+    const token = auth ? auth.replace(/^Bearer\s+/i, '') : null;
+    if (token) b2bSessions.delete(token);
+  }
+  res.json({ ok: true, data: null, message: 'Logged out' });
+});
+
+// B2B 상품 목록 (할인 가격 포함)
+app.get('/datepalm-bay/api/b2b/products', (req, res) => {
+  const session = validateB2BToken(req);
+  if (!session) {
+    return res.status(401).json({ ok: false, data: null, message: 'B2B authentication required.' });
+  }
+
+  const { discountPercent } = session;
+  const activeProducts = products.filter(p => p.productSaleStatus === true);
+
+  const b2bProducts = activeProducts.map(p => {
+    const regularPrice = p.regularPrice || p.price || 0;
+    const b2bPrice = Math.floor(regularPrice * (1 - discountPercent / 100) * 100) / 100;
+    return {
+      code: p.productCode || p.code,
+      name: p.productName || p.name,
+      summary: p.productNote || p.summary || '',
+      regularPrice,
+      retailPrice: p.price || regularPrice,
+      b2bPrice,
+      discountPercent,
+      thumbnailUrl: (p.mainImages && p.mainImages[0]?.url) || p.thumbnailUrl || '',
+      brand: p.brand || '',
+      category: p.category || '',
+    };
+  });
+
+  res.json({
+    ok: true,
+    data: b2bProducts,
+    message: `${b2bProducts.length} products retrieved`,
+  });
+});
+
+// ========================================
+// 어드민 B2B 유저 관리 API
+// ========================================
+
+// B2B 유저 목록
+app.get('/datepalm-bay/api/admin/b2b/users', (req, res) => {
+  res.json({ ok: true, data: b2bUsers, message: 'B2B users retrieved' });
+});
+
+// B2B 유저 생성
+app.post('/datepalm-bay/api/admin/b2b/users/create', (req, res) => {
+  const { id, password, companyName, contactEmail, discountPercent } = req.body.data || req.body;
+
+  if (!id || !password || !companyName) {
+    return res.status(400).json({ ok: false, data: null, message: 'id, password, companyName are required.' });
+  }
+  if (b2bUsers.find(u => u.id === id)) {
+    return res.status(409).json({ ok: false, data: null, message: 'B2B ID already exists.' });
+  }
+
+  const newUser = {
+    id,
+    password,
+    companyName,
+    contactEmail: contactEmail || '',
+    discountPercent: parseFloat(discountPercent) || 0,
+    isActive: true,
+    createdAt: new Date().toISOString(),
+  };
+
+  b2bUsers.push(newUser);
+  saveData();
+
+  res.json({ ok: true, data: newUser, message: 'B2B user created' });
+});
+
+// B2B 유저 수정
+app.put('/datepalm-bay/api/admin/b2b/users/edit', (req, res) => {
+  const { id, password, companyName, contactEmail, discountPercent, isActive } = req.body.data || req.body;
+
+  const user = b2bUsers.find(u => u.id === id);
+  if (!user) return res.status(404).json({ ok: false, data: null, message: 'B2B user not found.' });
+
+  if (password !== undefined) user.password = password;
+  if (companyName !== undefined) user.companyName = companyName;
+  if (contactEmail !== undefined) user.contactEmail = contactEmail;
+  if (discountPercent !== undefined) user.discountPercent = parseFloat(discountPercent) || 0;
+  if (isActive !== undefined) user.isActive = isActive;
+
+  saveData();
+  res.json({ ok: true, data: user, message: 'B2B user updated' });
+});
+
+// B2B 유저 삭제
+app.delete('/datepalm-bay/api/admin/b2b/users/delete', (req, res) => {
+  const { id } = req.body.data || req.body;
+  const before = b2bUsers.length;
+  b2bUsers = b2bUsers.filter(u => u.id !== id);
+  if (b2bUsers.length === before) {
+    return res.status(404).json({ ok: false, data: null, message: 'B2B user not found.' });
+  }
+  saveData();
+  res.json({ ok: true, data: null, message: 'B2B user deleted' });
 });
 
 // ========================================
@@ -6479,6 +6643,7 @@ async function startServer() {
   if (loadedData.coupons) coupons = loadedData.coupons;
   if (loadedData.snsReviews && loadedData.snsReviews.length > 0) snsReviews = loadedData.snsReviews;
   if (loadedData.orders) customerOrders = loadedData.orders;
+  if (loadedData.b2bUsers) b2bUsers = loadedData.b2bUsers;
   if (loadedData.snsReviewOverrides) snsReviewOverrides = loadedData.snsReviewOverrides;
   if (loadedData.productInsights) productInsights = loadedData.productInsights;
   if (loadedData.aiFeedbackHistory) aiFeedbackHistory = loadedData.aiFeedbackHistory;
