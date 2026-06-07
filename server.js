@@ -1626,17 +1626,20 @@ app.get('/datepalm-bay/api/b2b/products', (req, res) => {
   }
 
   const { discountPercent } = session;
-  const activeProducts = products.filter(p => p.productSaleStatus === true);
+  const activeProducts = products.filter(p => p.productSaleStatus === true || p.productSaleStatus === 'true');
+
+  console.log(`[B2B] products 전체: ${products.length}, 판매중: ${activeProducts.length}, discount: ${discountPercent}%`);
 
   const b2bProducts = activeProducts.map(p => {
-    const regularPrice = p.regularPrice || p.price || 0;
-    const b2bPrice = Math.floor(regularPrice * (1 - discountPercent / 100) * 100) / 100;
+    const listPrice = p.productRegularPrice || p.regularPrice || p.price || 0;
+    const retailPrice = p.productDiscountPrice > 0 ? p.productDiscountPrice : (p.productOriginPrice || p.price || listPrice);
+    const b2bPrice = Math.floor(listPrice * (1 - discountPercent / 100) * 100) / 100;
     return {
       code: p.productCode || p.code,
       name: p.productName || p.name,
       summary: p.productNote || p.summary || '',
-      regularPrice,
-      retailPrice: p.price || regularPrice,
+      regularPrice: listPrice,
+      retailPrice,
       b2bPrice,
       discountPercent,
       thumbnailUrl: (p.mainImages && p.mainImages[0]?.url) || p.thumbnailUrl || '',
