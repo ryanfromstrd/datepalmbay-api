@@ -96,9 +96,11 @@ async function loadData() {
           coupons: mysqlData.coupons || null,
           groupBuyTeams: mysqlData.groupBuyTeams || [],
           events: mysqlData.events || null,
+          banners: mysqlData.banners || [],
           snsReviewOverrides: mysqlData.snsReviewOverrides || [],
           productInsights: mysqlData.productInsights || [],
           aiFeedbackHistory: mysqlData.aiFeedbackHistory || [],
+          b2bUsers: mysqlData.b2bUsers || [],
         };
       }
       console.log('🗄️  MySQL 비어있음, JSON 파일 확인...');
