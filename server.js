@@ -1331,36 +1331,127 @@ app.get('/datepalm-bay/api/admin/member/detail/:code', (req, res) => {
   });
 });
 
-// 주문 목록 조회 API
+// ========================================
+// 관리자 주문 헬퍼 함수
+// ========================================
+function mapAdminOrderStatus(order) {
+  if (!order) return 'PROCESSING';
+  if (order.status === 'REFUNDED' || order.status === 'CANCEL') return 'CANCEL';
+  if (order.status === 'SUCCESS') {
+    if ((order.courier === 'FEDEX' && order.fedexTrackingNumber) ||
+        (order.courier === 'ARAMEX' && order.aramexTrackingNumber)) return 'DELIVERY';
+    return 'CHECKED';
+  }
+  return 'PROCESSING';
+}
+
+function formatAdminOrderListItem(order) {
+  return {
+    orderCode: order.orderId,
+    orderedAt: order.approvedAt || order.createdAt,
+    orderStatus: mapAdminOrderStatus(order),
+    ordererName: order.ordererName || '',
+    ordererContact: order.ordererContact || '',
+    address: order.city
+      ? `${order.city}${order.stateOrProvince ? ', ' + order.stateOrProvince : ''}, ${order.destinationCountry || ''}`
+      : (order.address || ''),
+    productName: order.productName || '',
+    quantity: order.quantity || 1,
+    orderPrice: order.amount || 0,
+    paymentPrice: order.amount || 0,
+    paymentType: order.paymentMethod || 'PAYPAL',
+  };
+}
+
+function formatAdminOrderDetail(order) {
+  const address = order.city
+    ? `${order.city}${order.stateOrProvince ? ', ' + order.stateOrProvince : ''}, ${order.destinationCountry || ''}`
+    : (order.address || '');
+  return {
+    orderInfo: {
+      orderCode: order.orderId,
+      orderType: order.orderType || 'NORMAL',
+      orderStatus: mapAdminOrderStatus(order),
+      orderedAt: order.approvedAt || order.createdAt,
+      ordererName: order.ordererName || '',
+      ordererContact: order.ordererContact || '',
+      ordererEmail: order.ordererEmail || '',
+      memberStatus: 'NORMAL',
+      quantity: order.quantity || 1,
+      orderPrice: order.amount || 0,
+      courier: order.courier || null,
+      invoiceNum: order.fedexTrackingNumber || order.aramexTrackingNumber || '',
+      deliveryAt: order.fedexShippedAt || order.aramexShippedAt || '',
+      deliveredAt: '',
+      recipientName: order.recipientName || '',
+      recipientContact: order.recipientContact || '',
+      recipientEmail: order.recipientEmail || '',
+      address,
+      addressDetail: order.detailAddress || '',
+      postalCode: order.postalCode || '',
+      city: order.city || '',
+      stateOrProvince: order.stateOrProvince || '',
+      destinationCountry: order.destinationCountry || '',
+      deliveryMemo: order.deliveryMemo || '',
+      fedexTrackingNumber: order.fedexTrackingNumber || null,
+      fedexServiceType: order.fedexServiceType || null,
+      fedexLabelUrl: order.fedexLabelUrl || null,
+      fedexEstimatedDelivery: order.fedexEstimatedDelivery || null,
+      fedexShippedAt: order.fedexShippedAt || null,
+    },
+    productInfo: {
+      productCode: order.productCode || '',
+      productName: order.productName || '',
+      productPrice: order.amount || 0,
+      discountType: 'STATIC',
+      discountPrice: order.couponDiscount || 0,
+    },
+    paymentInfo: {
+      paymentCode: order.orderId,
+      paymentReceiptNo: order.captureId || '',
+      paymentStatus: order.status === 'REFUNDED' ? 'REFUND' : order.status === 'SUCCESS' ? 'SUCCESS' : 'PROCESS',
+      paymentAccessDatetime: order.approvedAt || order.createdAt,
+      paymentType: order.paymentMethod || 'PAYPAL',
+      paymentPrice: order.amount || 0,
+    },
+    refundInfo: {
+      refundPrice: order.status === 'REFUNDED' ? (order.amount || 0) : 0,
+      refundRequestDatetime: '',
+      refundResultStatus: order.status === 'REFUNDED' ? 'SUCCESS' : '',
+      refundCancelAccessDatetime: '',
+      refundSuccessDatetime: '',
+    },
+  };
+}
+
+// 주문 목록 조회 API (실제 customerOrders 사용)
 app.get('/datepalm-bay/api/admin/order/list', (req, res) => {
   console.log('\n=== 주문 목록 조회 ===');
   const pageNo = parseInt(req.query.pageNo) || 0;
   const pageSize = parseInt(req.query.pageSize) || 10;
 
+  const sorted = [...customerOrders].sort((a, b) => new Date(b.createdAt) - new Date(a.createdAt));
   const start = pageNo * pageSize;
   const end = start + pageSize;
-  const paginatedOrders = orders.slice(start, end);
+  const paginatedOrders = sorted.slice(start, end).map(formatAdminOrderListItem);
 
   console.log(`페이지: ${pageNo}, 크기: ${pageSize}`);
-  console.log(`총 ${orders.length}개 주문 중 ${paginatedOrders.length}개 반환`);
+  console.log(`총 ${customerOrders.length}개 주문 중 ${paginatedOrders.length}개 반환`);
 
   res.json({
     ok: true,
     data: {
       content: paginatedOrders,
-      pageable: {
-        pageNumber: pageNo,
-        pageSize: pageSize
-      },
-      totalElements: orders.length,
-      totalPages: Math.ceil(orders.length / pageSize),
+      pageable: { pageNumber: pageNo, pageSize },
+      totalElements: customerOrders.length,
+      totalPages: Math.ceil(customerOrders.length / pageSize),
       size: pageSize,
       number: pageNo,
       first: pageNo === 0,
-      last: pageNo >= Math.floor(orders.length / pageSize),
-      numberOfElements: paginatedOrders.length
+      last: pageNo >= Math.floor(customerOrders.length / pageSize),
+      numberOfElements: paginatedOrders.length,
     },
-    message: '주문 목록 조회 성공'
+    message: '주문 목록 조회 성공',
   });
 });
 
@@ -1370,58 +1461,94 @@ app.get('/datepalm-bay/api/admin/order/detail/:code', (req, res) => {
   const { code } = req.params;
   console.log(`주문 코드: ${code}`);
 
-  const order = orders.find(o => o.orderCode === code);
+  const order = customerOrders.find(o => o.orderId === code);
 
   if (!order) {
-    return res.status(404).json({
-      ok: false,
-      data: null,
-      message: '주문을 찾을 수 없습니다.'
-    });
+    return res.status(404).json({ ok: false, data: null, message: '주문을 찾을 수 없습니다.' });
   }
 
-  console.log('조회 성공:', order.orderCode);
+  console.log('조회 성공:', order.orderId);
 
   res.json({
     ok: true,
-    data: order,
-    message: '주문 상세 조회 성공'
+    data: formatAdminOrderDetail(order),
+    message: '주문 상세 조회 성공',
   });
 });
 
 // 회원별 주문 목록 조회 API
 app.get('/datepalm-bay/api/admin/order/member-orders', (req, res) => {
   console.log('\n=== 회원별 주문 목록 조회 ===');
-  const memberCode = req.query.memberCode;
   const pageNo = parseInt(req.query.pageNo) || 0;
   const pageSize = parseInt(req.query.pageSize) || 10;
 
-  // 실제로는 memberCode로 필터링해야 하지만, 현재는 모든 주문 반환
+  const sorted = [...customerOrders].sort((a, b) => new Date(b.createdAt) - new Date(a.createdAt));
   const start = pageNo * pageSize;
   const end = start + pageSize;
-  const paginatedOrders = orders.slice(start, end);
-
-  console.log(`회원 코드: ${memberCode}, 페이지: ${pageNo}`);
-  console.log(`총 ${orders.length}개 주문 중 ${paginatedOrders.length}개 반환`);
+  const paginatedOrders = sorted.slice(start, end).map(formatAdminOrderListItem);
 
   res.json({
     ok: true,
     data: {
       content: paginatedOrders,
-      pageable: {
-        pageNumber: pageNo,
-        pageSize: pageSize
-      },
-      totalElements: orders.length,
-      totalPages: Math.ceil(orders.length / pageSize),
+      pageable: { pageNumber: pageNo, pageSize },
+      totalElements: customerOrders.length,
+      totalPages: Math.ceil(customerOrders.length / pageSize),
       size: pageSize,
       number: pageNo,
       first: pageNo === 0,
-      last: pageNo >= Math.floor(orders.length / pageSize),
-      numberOfElements: paginatedOrders.length
+      last: pageNo >= Math.floor(customerOrders.length / pageSize),
+      numberOfElements: paginatedOrders.length,
     },
-    message: '회원별 주문 목록 조회 성공'
+    message: '회원별 주문 목록 조회 성공',
   });
+});
+
+// 주문 삭제 API (영구 삭제)
+app.delete('/datepalm-bay/api/admin/order/delete', (req, res) => {
+  console.log('\n=== 주문 삭제 ===');
+  const requestData = req.body.data || req.body;
+  const { orderCodes } = requestData;
+
+  if (!orderCodes || !Array.isArray(orderCodes) || orderCodes.length === 0) {
+    return res.status(400).json({ ok: false, data: null, message: 'orderCodes 배열이 필요합니다.' });
+  }
+
+  const before = customerOrders.length;
+  customerOrders = customerOrders.filter(o => !orderCodes.includes(o.orderId));
+  const deleted = before - customerOrders.length;
+
+  saveData();
+  console.log(`${deleted}개 주문 삭제 완료`);
+
+  res.json({ ok: true, data: { deleted }, message: `${deleted}개 주문 삭제 완료` });
+});
+
+// 주문 수정 API
+app.put('/datepalm-bay/api/admin/order/edit', (req, res) => {
+  console.log('\n=== 주문 수정 ===');
+  const requestData = req.body.data || req.body;
+  const { orderCode, ...updates } = requestData;
+
+  const order = customerOrders.find(o => o.orderId === orderCode);
+  if (!order) {
+    return res.status(404).json({ ok: false, data: null, message: '주문을 찾을 수 없습니다.' });
+  }
+
+  const editableFields = [
+    'ordererName', 'ordererContact', 'ordererEmail',
+    'recipientName', 'recipientContact', 'recipientEmail',
+    'address', 'detailAddress', 'city', 'stateOrProvince', 'destinationCountry', 'postalCode',
+    'deliveryMemo',
+  ];
+  editableFields.forEach(field => {
+    if (updates[field] !== undefined) order[field] = updates[field];
+  });
+
+  saveData();
+  console.log(`주문 수정 완료: ${orderCode}`);
+
+  res.json({ ok: true, data: null, message: '주문 수정 완료' });
 });
 
 // ========================================
