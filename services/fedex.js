@@ -151,7 +151,7 @@ async function getRates({ recipient, packages, serviceType }) {
       shipper: { address: shipper.address },
       recipient: {
         address: {
-          postalCode: recipient.postalCode,
+          postalCode: recipient.postalCode || '00000',
           countryCode: recipient.countryCode,
           ...(recipient.city && { city: recipient.city }),
           ...(recipient.stateOrProvinceCode && recipient.stateOrProvinceCode.length <= 2 && { stateOrProvinceCode: recipient.stateOrProvinceCode }),

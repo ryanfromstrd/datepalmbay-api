@@ -5866,7 +5866,7 @@ app.post('/datepalm-bay/api/admin/fedex/create-shipment', async (req, res) => {
       streetLines: [order.address, order.detailAddress].filter(Boolean),
       city: recipientCity || '',
       ...(recipientState && recipientState.length <= 2 && { stateOrProvinceCode: recipientState }),
-      postalCode: order.postalCode || '',
+      postalCode: order.postalCode || '00000',
       countryCode: recipientCountry || 'US',
       residential: true,
     },
