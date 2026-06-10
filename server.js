@@ -3746,14 +3746,14 @@ app.get('/datepalm-bay/api/admin/banner/list', (req, res) => {
 });
 
 // Admin: 배너 생성 (이미지 업로드 포함)
-app.post('/datepalm-bay/api/admin/banner/create', upload.single('image'), (req, res) => {
+app.post('/datepalm-bay/api/admin/banner/create', upload.fields([{ name: 'image' }, { name: 'mobileImage' }]), (req, res) => {
   const baseUrl = getBaseUrl(req);
   const { title, linkUrl, order, status } = req.body;
 
-  const imageUrl = req.file
-    ? `${baseUrl}/uploads/${req.file.filename}`
-    : null;
+  const imageFile = req.files?.image?.[0];
+  const mobileImageFile = req.files?.mobileImage?.[0];
 
+  const imageUrl = imageFile ? `${baseUrl}/uploads/${imageFile.filename}` : null;
   if (!imageUrl) {
     return res.status(400).json({ ok: false, data: null, message: '이미지를 업로드해주세요.' });
   }
@@ -3762,6 +3762,7 @@ app.post('/datepalm-bay/api/admin/banner/create', upload.single('image'), (req, 
     code: `BNR-${Date.now()}`,
     title: title || '',
     imageUrl,
+    mobileImageUrl: mobileImageFile ? `${baseUrl}/uploads/${mobileImageFile.filename}` : null,
     linkUrl: linkUrl || '',
     order: parseInt(order) || banners.length + 1,
     status: status || 'ACTIVE',
@@ -3775,21 +3776,26 @@ app.post('/datepalm-bay/api/admin/banner/create', upload.single('image'), (req, 
 });
 
 // Admin: 배너 수정
-app.put('/datepalm-bay/api/admin/banner/edit', upload.single('image'), (req, res) => {
+app.put('/datepalm-bay/api/admin/banner/edit', upload.fields([{ name: 'image' }, { name: 'mobileImage' }]), (req, res) => {
   const baseUrl = getBaseUrl(req);
-  const { code, title, linkUrl, order, status } = req.body;
+  const { code, title, linkUrl, order, status, removeMobileImage } = req.body;
 
   const idx = banners.findIndex(b => b.code === code);
   if (idx === -1) return res.status(404).json({ ok: false, data: null, message: '배너를 찾을 수 없습니다.' });
 
-  const imageUrl = req.file
-    ? `${baseUrl}/uploads/${req.file.filename}`
-    : banners[idx].imageUrl;
+  const imageFile = req.files?.image?.[0];
+  const mobileImageFile = req.files?.mobileImage?.[0];
+
+  const imageUrl = imageFile ? `${baseUrl}/uploads/${imageFile.filename}` : banners[idx].imageUrl;
+  const mobileImageUrl = mobileImageFile
+    ? `${baseUrl}/uploads/${mobileImageFile.filename}`
+    : removeMobileImage === 'true' ? null : banners[idx].mobileImageUrl;
 
   banners[idx] = {
     ...banners[idx],
     title: title !== undefined ? title : banners[idx].title,
     imageUrl,
+    mobileImageUrl,
     linkUrl: linkUrl !== undefined ? linkUrl : banners[idx].linkUrl,
     order: order !== undefined ? parseInt(order) : banners[idx].order,
     status: status !== undefined ? status : banners[idx].status,
