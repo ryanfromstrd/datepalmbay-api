@@ -154,7 +154,7 @@ async function getRates({ recipient, packages, serviceType }) {
           postalCode: recipient.postalCode,
           countryCode: recipient.countryCode,
           ...(recipient.city && { city: recipient.city }),
-          ...(recipient.stateOrProvinceCode && { stateOrProvinceCode: recipient.stateOrProvinceCode }),
+          ...(recipient.stateOrProvinceCode && recipient.stateOrProvinceCode.length <= 2 && { stateOrProvinceCode: recipient.stateOrProvinceCode }),
         },
       },
       pickupType: 'DROPOFF_AT_FEDEX_LOCATION',
