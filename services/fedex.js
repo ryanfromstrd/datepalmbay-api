@@ -111,11 +111,12 @@ async function getAccessToken(project = 'default') {
  * Get shipper address from environment variables
  */
 function getShipperInfo() {
+  const shipperState = process.env.FEDEX_SHIPPER_STATE;
   return {
     address: {
       streetLines: [process.env.FEDEX_SHIPPER_STREET || '123 Warehouse St'],
       city: process.env.FEDEX_SHIPPER_CITY || 'Seoul',
-      stateOrProvinceCode: process.env.FEDEX_SHIPPER_STATE || 'SE',
+      ...(shipperState && { stateOrProvinceCode: shipperState }),
       postalCode: process.env.FEDEX_SHIPPER_POSTAL || '06100',
       countryCode: process.env.FEDEX_SHIPPER_COUNTRY || 'KR',
     },
