@@ -230,6 +230,61 @@ function getBaseUrl(req) {
   return `${protocol}://${host}`;
 }
 
+// SEO: sitemap.xml (실시간 상품/이벤트 반영, Vercel에서 datepalmbay.com/sitemap.xml로 프록시)
+const SITE_URL = 'https://datepalmbay.com';
+
+function xmlEscape(str) {
+  return String(str).replace(/[&<>'"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', "'": '&apos;', '"': '&quot;' }[c]));
+}
+
+app.get('/sitemap.xml', (req, res) => {
+  const staticUrls = [
+    { loc: `${SITE_URL}/`, priority: '1.0' },
+    { loc: `${SITE_URL}/ar`, priority: '0.9' },
+    { loc: `${SITE_URL}/fr`, priority: '0.9' },
+    { loc: `${SITE_URL}/shop`, priority: '0.9' },
+    { loc: `${SITE_URL}/new`, priority: '0.7' },
+    { loc: `${SITE_URL}/brands`, priority: '0.7' },
+    { loc: `${SITE_URL}/beauty`, priority: '0.7' },
+    { loc: `${SITE_URL}/professional-beauty`, priority: '0.7' },
+    { loc: `${SITE_URL}/k-culture`, priority: '0.7' },
+    { loc: `${SITE_URL}/best-seller`, priority: '0.7' },
+    { loc: `${SITE_URL}/supplement`, priority: '0.7' },
+    { loc: `${SITE_URL}/lifestyle`, priority: '0.7' },
+    { loc: `${SITE_URL}/event`, priority: '0.7' },
+    { loc: `${SITE_URL}/faq`, priority: '0.8' },
+  ];
+
+  const productUrls = (products || [])
+    .filter((p) => p.productSaleStatus === true)
+    .map((p) => {
+      const lastmodSource = p.updatedAt || p.createdAt;
+      return {
+        loc: `${SITE_URL}/shop/detail/${p.productCode}`,
+        lastmod: lastmodSource ? new Date(lastmodSource).toISOString().split('T')[0] : undefined,
+        priority: '0.8',
+      };
+    });
+
+  const eventUrls = (events || []).map((e) => ({
+    loc: `${SITE_URL}/event/${e.code}`,
+    priority: '0.6',
+  }));
+
+  const allUrls = [...staticUrls, ...productUrls, ...eventUrls];
+
+  const xml = `<?xml version="1.0" encoding="UTF-8"?>
+<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">
+${allUrls.map((u) => `  <url>
+    <loc>${xmlEscape(u.loc)}</loc>
+${u.lastmod ? `    <lastmod>${u.lastmod}</lastmod>\n` : ''}    <priority>${u.priority}</priority>
+  </url>`).join('\n')}
+</urlset>`;
+
+  res.type('application/xml');
+  res.send(xml);
+});
+
 // 업로드 폴더 생성 (Volume 지원)
 const uploadDir = path.join(DATA_DIR, 'uploads');
 if (!fs.existsSync(uploadDir)) {
