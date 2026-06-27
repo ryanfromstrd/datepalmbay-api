@@ -2967,6 +2967,32 @@ app.post('/datepalm-bay/api/mvp/member/check-email', (req, res) => {
 // ======================================
 // Member Create (Sign Up)
 // ======================================
+// 신규 회원에게 자동 발급 쿠폰(Welcome Coupon 등) 지급
+function autoIssueWelcomeCoupons(user) {
+  const now = new Date();
+  coupons.forEach(coupon => {
+    if (!coupon.isAutoIssue) return;
+    if (coupon.status !== 'ACTIVE') return;
+    if (new Date(coupon.startDate) > now || new Date(coupon.endDate) < now) return;
+
+    const targetsNewMembers = coupon.couponType === 'WELCOME' || coupon.targetCondition?.newMemberOnly;
+    if (!targetsNewMembers) return;
+
+    const alreadyIssued = userCoupons.some(uc => uc.userId === user.code && uc.couponCode === coupon.code);
+    if (alreadyIssued) return;
+
+    userCoupons.push({
+      id: `UC-${Date.now()}-${Math.round(Math.random() * 1e6)}`,
+      userId: user.code,
+      couponCode: coupon.code,
+      downloadedAt: new Date().toISOString(),
+      usedAt: null,
+      usedOrderCode: null,
+    });
+    console.log(`🎁 Welcome coupon auto-issued: ${coupon.code} -> ${user.code}`);
+  });
+}
+
 app.post('/datepalm-bay/api/mvp/member/create', (req, res) => {
   console.log('\n=== [Member] Create New Member ===');
   const { id, password, name, email, phone, birthdate, country } = req.body;
@@ -3025,6 +3051,7 @@ app.post('/datepalm-bay/api/mvp/member/create', (req, res) => {
     country: newUser.country,
   };
   members.push(newMember);
+  autoIssueWelcomeCoupons(newUser);
 
   console.log(`✅ New member created: ${name} (${email})`);
   saveData();
@@ -5443,7 +5470,11 @@ app.post('/datepalm-bay/api/admin/coupon/create', express.json(), (req, res) => 
     usageCount: 0,
     usageLimit: requestData.usageLimit || null,
     createdAt: new Date().toISOString(),
-    updatedAt: new Date().toISOString()
+    updatedAt: new Date().toISOString(),
+    couponType: requestData.couponType || 'GENERAL',
+    isDownloadable: requestData.isDownloadable !== undefined ? requestData.isDownloadable : true,
+    isAutoIssue: requestData.isAutoIssue || false,
+    targetCondition: requestData.targetCondition || undefined,
   };
 
   coupons.push(newCoupon);
@@ -5487,7 +5518,11 @@ app.put('/datepalm-bay/api/admin/coupon/edit', express.json(), (req, res) => {
     endDate: requestData.endDate,
     status: requestData.status || existingCoupon.status,
     usageLimit: requestData.usageLimit || null,
-    updatedAt: new Date().toISOString()
+    updatedAt: new Date().toISOString(),
+    couponType: requestData.couponType || existingCoupon.couponType || 'GENERAL',
+    isDownloadable: requestData.isDownloadable !== undefined ? requestData.isDownloadable : existingCoupon.isDownloadable,
+    isAutoIssue: requestData.isAutoIssue !== undefined ? requestData.isAutoIssue : existingCoupon.isAutoIssue || false,
+    targetCondition: requestData.targetCondition !== undefined ? requestData.targetCondition : existingCoupon.targetCondition,
   };
 
   console.log(`Coupon updated: ${requestData.code}`);
@@ -6854,6 +6889,8 @@ app.put('/datepalm-bay/api/mvp/member/complete-profile', (req, res) => {
     member.phone = user.phone;
     member.status = 'ACTIVE';
   }
+
+  autoIssueWelcomeCoupons(user);
 
   saveData();
   console.log(`✅ Profile completed: ${user.name} (${user.email}), country=${country}, phone=${phone}`);
