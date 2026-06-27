@@ -1800,6 +1800,38 @@ app.put('/datepalm-bay/api/admin/order/edit', (req, res) => {
   res.json({ ok: true, data: null, message: '주문 수정 완료' });
 });
 
+// 주문 상태 변경 API (주문 취소 등)
+app.put('/datepalm-bay/api/admin/order/status', (req, res) => {
+  console.log('\n=== 주문 상태 변경 ===');
+  const requestData = req.body.data || req.body;
+  const { orderCodes, targetStatus } = requestData;
+
+  if (!orderCodes || !Array.isArray(orderCodes) || orderCodes.length === 0) {
+    return res.status(400).json({ ok: false, data: null, message: 'orderCodes 배열이 필요합니다.' });
+  }
+  if (!targetStatus) {
+    return res.status(400).json({ ok: false, data: null, message: 'targetStatus가 필요합니다.' });
+  }
+
+  let updatedCount = 0;
+  orderCodes.forEach(code => {
+    const order = customerOrders.find(o => o.orderId === code);
+    if (order) {
+      order.status = targetStatus;
+      updatedCount++;
+    }
+  });
+
+  if (updatedCount === 0) {
+    return res.status(404).json({ ok: false, data: null, message: '주문을 찾을 수 없습니다.' });
+  }
+
+  saveData();
+  console.log(`${updatedCount}개 주문 상태를 ${targetStatus}(으)로 변경 완료`);
+
+  res.json({ ok: true, data: { updatedCount }, message: '주문 상태 변경 완료' });
+});
+
 // ========================================
 // B2B API (고객 B2B 포털)
 // ========================================
