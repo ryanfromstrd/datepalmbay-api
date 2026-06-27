@@ -5,6 +5,7 @@ const cors = require('cors');
 const multer = require('multer');
 const path = require('path');
 const fs = require('fs');
+const fetch = require('node-fetch');
 
 // SNS 리뷰 수집기 서비스
 const snsCollector = require('./services/snsReviewCollector');
@@ -294,7 +295,7 @@ console.log(`📁 업로드 디렉토리: ${uploadDir}`);
 
 // CORS 설정
 app.use(cors());
-app.use(express.json());
+app.use(express.json({ limit: '10mb' })); // 상품 일괄 등록 시 큰 JSON 본문 허용
 app.use(express.urlencoded({ extended: true })); // Form data 처리
 
 // 정적 파일 서빙 (업로드된 이미지)
@@ -698,6 +699,58 @@ const calculatePrice = (regularPrice, discountStatus, discountType, discountPric
   return regularPrice;
 };
 
+// URL로부터 이미지를 다운로드해 uploads 폴더에 저장 (상품 일괄 등록용)
+async function downloadImageFromUrl(imageUrl) {
+  let response;
+  try {
+    response = await fetch(imageUrl);
+  } catch (err) {
+    throw new Error(`이미지 다운로드 실패: ${imageUrl}`);
+  }
+
+  if (!response.ok) {
+    throw new Error(`이미지 다운로드 실패 (HTTP ${response.status}): ${imageUrl}`);
+  }
+
+  const contentType = (response.headers.get('content-type') || '').split(';')[0].trim();
+  if (!IMAGE_VALIDATION.ALLOWED_TYPES.includes(contentType)) {
+    throw new Error(`지원하지 않는 이미지 형식입니다 (${contentType || '알 수 없음'}): ${imageUrl}`);
+  }
+
+  const buffer = await response.buffer();
+  if (buffer.length === 0) {
+    throw new Error(`빈 이미지 파일입니다: ${imageUrl}`);
+  }
+  if (buffer.length > IMAGE_VALIDATION.MAX_FILE_SIZE) {
+    throw new Error(`이미지 크기가 ${IMAGE_VALIDATION.MAX_FILE_SIZE / 1024 / 1024}MB를 초과합니다: ${imageUrl}`);
+  }
+
+  const extByType = {
+    'image/jpeg': '.jpg',
+    'image/png': '.png',
+    'image/gif': '.gif',
+    'image/webp': '.webp',
+    'image/svg+xml': '.svg',
+  };
+  let urlPath = '';
+  try {
+    urlPath = new URL(imageUrl).pathname;
+  } catch (e) {
+    urlPath = '';
+  }
+  const ext = extByType[contentType] || path.extname(urlPath) || '.jpg';
+  const uniqueSuffix = Date.now() + '-' + Math.round(Math.random() * 1e9);
+  const filename = `${uniqueSuffix}-bulk_import${ext}`;
+  fs.writeFileSync(path.join(uploadDir, filename), buffer);
+
+  return {
+    filename,
+    size: buffer.length,
+    mimetype: contentType,
+    originalName: path.basename(urlPath) || filename,
+  };
+}
+
 // 상품 생성 API
 app.post('/datepalm-bay/api/admin/product/create', upload.fields([
   { name: 'mainImages', maxCount: 5 },
@@ -841,6 +894,129 @@ app.post('/datepalm-bay/api/admin/product/create', upload.fields([
       message: '상품 생성에 실패했습니다.'
     });
   }
+});
+
+// 상품 일괄 생성 API (CSV/엑셀 업로드용 - 이미지는 URL로 받아서 서버가 다운로드)
+app.post('/datepalm-bay/api/admin/product/bulk-create', async (req, res) => {
+  const rows = req.body.products;
+
+  if (!Array.isArray(rows) || rows.length === 0) {
+    return res.status(400).json({ ok: false, data: null, message: '등록할 상품 목록이 없습니다.' });
+  }
+
+  const baseUrl = getBaseUrl(req);
+  const results = [];
+
+  for (let i = 0; i < rows.length; i++) {
+    const rowData = rows[i] || {};
+    const rowNo = i + 1;
+
+    try {
+      const validationErrors = validateProductRequest(rowData);
+      if (validationErrors.length > 0) {
+        results.push({ row: rowNo, success: false, error: validationErrors.join(', ') });
+        continue;
+      }
+
+      const mainImageUrls = String(rowData.mainImageUrls || '').split(',').map((u) => u.trim()).filter(Boolean);
+      const detailImageUrls = String(rowData.detailImageUrls || '').split(',').map((u) => u.trim()).filter(Boolean);
+
+      if (mainImageUrls.length < 1 || mainImageUrls.length > 5) {
+        results.push({ row: rowNo, success: false, error: '대표 이미지 URL은 최소 1개, 최대 5개까지 입력해야 합니다.' });
+        continue;
+      }
+      if (detailImageUrls.length > 20) {
+        results.push({ row: rowNo, success: false, error: '상세 이미지 URL은 최대 20개까지 입력 가능합니다.' });
+        continue;
+      }
+
+      const productCode = `PROD-${Date.now()}-${rowNo}`;
+      let mainImages;
+      let detailImages;
+
+      try {
+        mainImages = await Promise.all(
+          mainImageUrls.map(async (url, index) => {
+            const file = await downloadImageFromUrl(url);
+            return {
+              code: `${productCode}-M${index + 1}`,
+              url: `${baseUrl}/uploads/${file.filename}`,
+              originalName: file.originalName,
+              size: file.size,
+              mimetype: file.mimetype,
+              order: index + 1,
+            };
+          })
+        );
+        detailImages = await Promise.all(
+          detailImageUrls.map(async (url, index) => {
+            const file = await downloadImageFromUrl(url);
+            return {
+              code: `${productCode}-D${index + 1}`,
+              url: `${baseUrl}/uploads/${file.filename}`,
+              originalName: file.originalName,
+              size: file.size,
+              mimetype: file.mimetype,
+              order: index + 1,
+            };
+          })
+        );
+      } catch (imgErr) {
+        results.push({ row: rowNo, success: false, error: imgErr.message });
+        continue;
+      }
+
+      const productPrice = calculatePrice(
+        rowData.productRegularPrice,
+        rowData.discountStatus,
+        rowData.discountType,
+        rowData.discountPrice
+      );
+
+      const newProduct = {
+        productCode,
+        productName: rowData.name,
+        productSaleStatus: rowData.saleStatus,
+        category: rowData.category,
+        productOriginPrice: rowData.productOriginPrice,
+        productRegularPrice: rowData.productRegularPrice,
+        discountType: rowData.discountType,
+        productDiscountPrice: rowData.discountPrice || 0,
+        productPrice,
+        introduction: rowData.introduction || '',
+        policy: {
+          deliveryPolicy: rowData.deliveryPolicy || '',
+          refundPolicy: rowData.refundPolicy || '',
+          exchangePolicy: rowData.exchangePolicy || '',
+        },
+        detailInfo: rowData.detailInfo || '',
+        files: { mainImages, detailImages },
+        groupBuyTiers: [],
+        productOptions: [],
+        shippingCostType: rowData.shippingCostType || 'FREE',
+        shippingCost: rowData.shippingCost || 0,
+        freeShippingThreshold: rowData.freeShippingThreshold || 0,
+        brand: rowData.brand || '',
+        createdAt: new Date().toISOString(),
+      };
+
+      products.push(newProduct);
+      results.push({ row: rowNo, success: true, productCode });
+    } catch (err) {
+      results.push({ row: rowNo, success: false, error: err.message || '알 수 없는 오류' });
+    }
+  }
+
+  saveData();
+
+  const successCount = results.filter((r) => r.success).length;
+  const failCount = results.length - successCount;
+
+  res.json({
+    ok: true,
+    data: { successCount, failCount, results },
+    message: `${successCount}건 성공, ${failCount}건 실패`,
+  });
 });
 
 // 상품 수정 API
