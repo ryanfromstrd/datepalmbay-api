@@ -56,8 +56,15 @@ async function getAccessToken() {
  * @param {string} orderData.orderName - Order description
  * @param {string} orderData.currency - Currency code (default: USD)
  */
+// PayPal이 소수점을 받지 않는 통화 (정수 단위로 전송해야 함)
+const ZERO_DECIMAL_CURRENCIES = ['JPY', 'HUF', 'TWD'];
+
 async function createOrder({ orderId, amount, orderName, currency = 'USD' }) {
   const accessToken = await getAccessToken();
+
+  const formattedValue = ZERO_DECIMAL_CURRENCIES.includes(currency)
+    ? String(Math.round(amount))
+    : amount.toFixed(2);
 
   const payload = {
     intent: 'CAPTURE',
@@ -67,7 +74,7 @@ async function createOrder({ orderId, amount, orderName, currency = 'USD' }) {
         description: orderName,
         amount: {
           currency_code: currency,
-          value: amount.toFixed(2),
+          value: formattedValue,
         },
       },
     ],

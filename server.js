@@ -19,6 +19,8 @@ const paypalService = require('./services/paypal');
 const fedexService = require('./services/fedex');
 // Aramex 물류 서비스
 const aramexService = require('./services/aramex');
+// 통화 변환 서비스 (회원 국가 → 실청구 통화 / FX 환율)
+const currencyService = require('./services/currency');
 // MySQL Database 서비스
 const database = require('./services/database');
 // Twilio Verify 서비스 — 환경변수 정규식 정제 (비허용 문자 제거)
@@ -2749,7 +2751,9 @@ app.get('/datepalm-bay/api/mvp/member/detail/me', (req, res) => {
       email: user.email,
       phone: user.phone,
       status: user.status,
-      createAt: user.createAt
+      createAt: user.createAt,
+      country: user.country || '',
+      currency: currencyService.getMemberCurrency(user.country || ''),
     },
     message: 'User profile retrieved successfully'
   });
@@ -5001,14 +5005,37 @@ app.post('/datepalm-bay/api/mvp/order/create', async (req, res) => {
   // 금액이 0 이하가 되지 않도록
   amount = Math.max(0, amount);
 
+  // 회원 가입국가 기준 실청구 통화 결정 (PayPal 미지원 통화는 USD 유지)
+  const amountUSD = amount;
+  let finalAmount = amount;
+  let finalCurrency = 'USD';
+  let fxRate = 1;
+  try {
+    const authHeader = req.headers.authorization;
+    const token = authHeader ? authHeader.replace('Bearer ', '') : null;
+    const userId = token ? extractUserIdFromToken(token) : null;
+    const orderingUser = userId ? users.find(u => u.id === userId || u.code === userId) : null;
+    const memberCurrency = orderingUser ? currencyService.getMemberCurrency(orderingUser.country || '') : 'USD';
+    if (memberCurrency !== 'USD') {
+      const converted = await currencyService.convertFromUSD(amountUSD, memberCurrency);
+      finalAmount = converted.amount;
+      finalCurrency = converted.currency;
+      fxRate = converted.fxRate;
+    }
+  } catch (err) {
+    console.error('[Currency] 통화 변환 실패, USD로 진행:', err.message);
+  }
+
   // 주문 정보 저장
   const newOrder = {
     orderId,
     productCode: isBundleOrder ? bundleItems.map(i => i.productCode).join(',') : productCode,
     productName: orderName,
     quantity: isBundleOrder ? bundleItems.reduce((sum, i) => sum + i.quantity, 0) : quantity,
-    amount,
-    currency,
+    amount: finalAmount,
+    amountUSD,
+    fxRate,
+    currency: finalCurrency,
     orderType: orderType || 'NORMAL',
     teamId: teamId || null,
     ordererName,
@@ -5060,14 +5087,15 @@ app.post('/datepalm-bay/api/mvp/order/create', async (req, res) => {
   console.log(`✅ 주문 생성 완료: ${orderId}`);
   console.log(`  상품: ${orderName}`);
   console.log(`  수량: ${newOrder.quantity}`);
-  console.log(`  금액: $${amount.toFixed(2)} ${currency}`);
+  console.log(`  금액: ${finalAmount} ${finalCurrency} (USD 환산: $${amountUSD.toFixed(2)})`);
 
   res.json({
     ok: true,
     data: {
       orderId,
-      amount,
-      currency,
+      amount: finalAmount,
+      amountUSD,
+      currency: finalCurrency,
       orderName
     },
     message: 'Order created successfully'
@@ -5090,13 +5118,32 @@ app.post('/datepalm-bay/api/mvp/paypal/create-order', async (req, res) => {
   }
 
   try {
-    // PayPal 주문 생성
-    const paypalOrder = await paypalService.createOrder({
-      orderId: order.orderId,
-      amount: order.amount,
-      orderName: order.productName,
-      currency: order.currency || 'USD'
-    });
+    // PayPal 주문 생성 (계정이 해당 통화를 거부하면 USD로 자동 폴백)
+    let paypalOrder;
+    try {
+      paypalOrder = await paypalService.createOrder({
+        orderId: order.orderId,
+        amount: order.amount,
+        orderName: order.productName,
+        currency: order.currency || 'USD'
+      });
+    } catch (currencyError) {
+      if (order.currency && order.currency !== 'USD') {
+        console.error(`[PayPal] ${order.currency} 거부됨, USD로 재시도:`, currencyError.message);
+        const usdAmount = order.amountUSD || order.amount;
+        paypalOrder = await paypalService.createOrder({
+          orderId: order.orderId,
+          amount: usdAmount,
+          orderName: order.productName,
+          currency: 'USD'
+        });
+        order.amount = usdAmount;
+        order.currency = 'USD';
+        order.fxRate = 1;
+      } else {
+        throw currencyError;
+      }
+    }
 
     // PayPal 주문 ID 저장
     order.paypalOrderId = paypalOrder.id;
@@ -5106,7 +5153,9 @@ app.post('/datepalm-bay/api/mvp/paypal/create-order', async (req, res) => {
     res.json({
       ok: true,
       data: {
-        paypalOrderId: paypalOrder.id
+        paypalOrderId: paypalOrder.id,
+        amount: order.amount,
+        currency: order.currency
       },
       message: 'PayPal order created'
     });
@@ -5323,6 +5372,7 @@ app.get('/datepalm-bay/api/mvp/order/history', (req, res) => {
       orderStatus: mapOrderStatus(o.status, o),
       orderAt: o.approvedAt || o.createdAt,
       paymentAmount: o.amount || 0,
+      currency: o.currency || 'USD',
     };
   }).sort((a, b) => new Date(b.orderAt) - new Date(a.orderAt));
 
@@ -5355,6 +5405,7 @@ app.get('/datepalm-bay/api/mvp/order/detail/:code', (req, res) => {
         productName: order.productName,
         quantity: order.quantity,
         orderAmount: order.amount,
+        currency: order.currency || 'USD',
         ordererName: order.ordererName,
         ordererContact: order.ordererContact,
         orderEmail: order.ordererEmail || '',
@@ -5378,6 +5429,7 @@ app.get('/datepalm-bay/api/mvp/order/detail/:code', (req, res) => {
         paymentType: order.paymentMethod || 'PAYPAL',
         paymentApprovedAt: order.approvedAt || order.createdAt,
         paymentAmount: order.amount || 0,
+        currency: order.currency || 'USD',
       },
     },
     message: 'Order detail retrieved',
@@ -6128,6 +6180,21 @@ app.post('/datepalm-bay/api/mvp/coupons/use/:code', (req, res) => {
     },
     message: 'Coupon used successfully'
   });
+});
+
+// ======================================
+// 통화/환율 API
+// ======================================
+
+// 실시간 FX 환율 조회 (프론트엔드 가격 표시용, USD 기준)
+app.get('/datepalm-bay/api/fx/rates', async (req, res) => {
+  try {
+    const rates = await currencyService.getRates();
+    res.json({ ok: true, data: rates, message: 'FX rates retrieved' });
+  } catch (error) {
+    console.error('[Currency] FX rates error:', error.message);
+    res.status(500).json({ ok: false, data: null, message: error.message || 'Failed to fetch FX rates' });
+  }
 });
 
 // ======================================
