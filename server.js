@@ -2717,11 +2717,18 @@ app.get('/datepalm-bay/api/mvp/member/detail/me', (req, res) => {
     });
   }
 
-  // Extract user ID from mock token (format: mock-token-{userId}-{timestamp})
   const token = authHeader.replace('Bearer ', '');
-  const userId = token.split('-')[2];
+  const userId = extractUserIdFromToken(token);
 
-  const user = users.find(u => u.id === userId);
+  if (!userId) {
+    return res.status(401).json({
+      ok: false,
+      data: null,
+      message: 'Session expired'
+    });
+  }
+
+  const user = users.find(u => u.id === userId || u.code === userId);
 
   if (!user) {
     return res.status(404).json({
@@ -2746,6 +2753,43 @@ app.get('/datepalm-bay/api/mvp/member/detail/me', (req, res) => {
     },
     message: 'User profile retrieved successfully'
   });
+});
+
+// 민감 작업(결제, 내 정보 수정) 진입 전 비밀번호 재확인
+app.post('/datepalm-bay/api/mvp/member/verify-password', (req, res) => {
+  console.log('\n=== [Auth] Verify Password (re-auth) ===');
+
+  const authHeader = req.headers.authorization;
+  if (!authHeader) {
+    return res.status(401).json({ ok: false, data: null, message: 'Authorization token required' });
+  }
+
+  const token = authHeader.replace('Bearer ', '');
+  const userId = extractUserIdFromToken(token);
+  if (!userId) {
+    return res.status(401).json({ ok: false, data: null, message: 'Session expired' });
+  }
+
+  const user = users.find(u => u.id === userId || u.code === userId);
+  if (!user) {
+    return res.status(404).json({ ok: false, data: null, message: 'User not found' });
+  }
+
+  // Google 로그인 등 로컬 비밀번호가 없는 계정은 재확인 절차를 건너뜀
+  if (!user.password) {
+    return res.json({ ok: true, data: null, message: 'No password set - skipped' });
+  }
+
+  const { password } = req.body;
+  if (!password) {
+    return res.status(400).json({ ok: false, data: null, message: 'Password is required' });
+  }
+
+  if (user.password !== password) {
+    return res.status(403).json({ ok: false, data: null, message: 'Incorrect password' });
+  }
+
+  res.json({ ok: true, data: null, message: 'Password verified' });
 });
 
 // ======================================
@@ -5593,19 +5637,23 @@ app.get('/datepalm-bay/api/mvp/coupons/available', (req, res) => {
 // Frontend - Coupon Center APIs (서버 저장 방식)
 // ======================================
 
-// 토큰에서 userId 추출 함수
-// 토큰 형식: mock-token-{userId}-{timestamp}
+// 고객 세션 만료 기간 (이커머스 일반 관행: 30일 지속 로그인)
+const CUSTOMER_TOKEN_TTL_MS = 30 * 24 * 60 * 60 * 1000;
+
+// 토큰에서 userId 추출 함수 (만료된 토큰은 null 반환)
+// 토큰 형식: mock-token-{userId}-{timestamp} 또는 google-oauth-{userId}-{timestamp}
 function extractUserIdFromToken(token) {
   if (!token) return null;
 
-  // mock-token-{userId}-{timestamp} 형식 처리
-  if (token.startsWith('mock-token-')) {
+  // mock-token-{userId}-{timestamp} / google-oauth-{userId}-{timestamp} 형식 처리
+  if (token.startsWith('mock-token-') || token.startsWith('google-oauth-')) {
     const parts = token.split('-');
-    // parts: ['mock', 'token', '{userId}', '{timestamp}']
     if (parts.length >= 4) {
-      // userId가 여러 단어인 경우 (예: USER-001) 처리
-      // mock-token-USER-001-1234567890 → parts = ['mock', 'token', 'USER', '001', '1234567890']
-      // 마지막은 timestamp이므로 제외하고 3번째부터 합침
+      // 마지막 세그먼트는 발급 시각(timestamp), 'mock'/'token' 또는 'google'/'oauth' 다음부터 그 앞까지가 userId (예: USER-001)
+      const issuedAt = Number(parts[parts.length - 1]);
+      if (!Number.isNaN(issuedAt) && Date.now() - issuedAt > CUSTOMER_TOKEN_TTL_MS) {
+        return null; // 세션 만료
+      }
       const userIdParts = parts.slice(2, -1);
       return userIdParts.join('-');
     }
