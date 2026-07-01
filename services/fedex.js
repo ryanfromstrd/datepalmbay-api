@@ -192,14 +192,17 @@ async function getRates({ recipient, packages, serviceType }) {
     throw new Error(data.errors?.[0]?.message || 'Failed to get FedEx rates');
   }
 
-  // Parse rate options
+  // Parse rate options — prefer ACCOUNT (negotiated/corporate discount) over LIST
   const rateOptions = (data.output?.rateReplyDetails || []).map((detail) => {
-    const shipmentRate = detail.ratedShipmentDetails?.[0];
+    const shipmentRate =
+      detail.ratedShipmentDetails?.find((r) => r.rateType === 'ACCOUNT') ||
+      detail.ratedShipmentDetails?.[0];
     return {
       serviceType: detail.serviceType,
       serviceName: detail.serviceName || detail.serviceType,
       totalCharge: parseFloat(shipmentRate?.totalNetCharge || 0),
       currency: shipmentRate?.currency || 'USD',
+      rateType: shipmentRate?.rateType || 'LIST',
       estimatedDeliveryDate: detail.commit?.dateDetail?.dayFormat || null,
       transitDays: detail.commit?.transitDays?.value || null,
     };
