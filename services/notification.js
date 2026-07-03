@@ -26,17 +26,17 @@ async function notifyAdminNewOrder(order) {
   });
 
   const text = [
-    '🛒 *새 주문이 들어왔습니다!*',
+    '*데이트팜베이 새 주문이 들어왔습니다 !*',
     '',
-    `📦 상품: ${order.productName || '-'}`,
-    `🔢 수량: ${order.quantity || '-'}`,
-    `💰 결제금액: ${amount}`,
-    `👤 고객: ${order.ordererName || '-'}`,
-    `📧 이메일: ${order.ordererEmail || '-'}`,
-    `📞 연락처: ${order.ordererContact || '-'}`,
-    `🌍 배송국가: ${order.destinationCountry || '-'}`,
-    `🆔 주문ID: \`${order.orderId}\``,
-    `🕐 결제시각: ${date}`,
+    `상품: ${order.productName || '-'}`,
+    `수량: ${order.quantity || '-'}`,
+    `결제금액: ${amount}`,
+    `고객: ${order.ordererName || '-'}`,
+    `이메일: ${order.ordererEmail || '-'}`,
+    `연락처: ${order.ordererContact || '-'}`,
+    `배송국가: ${order.destinationCountry || '-'}`,
+    `주문ID: \`${order.orderId}\``,
+    `결제시각: ${date}`,
   ].join('\n');
 
   try {
