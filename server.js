@@ -21,6 +21,8 @@ const fedexService = require('./services/fedex');
 const aramexService = require('./services/aramex');
 // 통화 변환 서비스 (회원 국가 → 실청구 통화 / FX 환율)
 const currencyService = require('./services/currency');
+// 관리자 주문 알림 서비스 (이메일 + SMS)
+const notificationService = require('./services/notification');
 // MySQL Database 서비스
 const database = require('./services/database');
 // Twilio Verify 서비스 — 환경변수 정규식 정제 (비허용 문자 제거)
@@ -5198,6 +5200,11 @@ app.post('/datepalm-bay/api/mvp/paypal/capture-order', async (req, res) => {
     saveData();
 
     console.log(`✅ PayPal 결제 완료: ${order.orderId}`);
+
+    // 관리자 알림 (이메일 + SMS) — 비동기, 실패해도 결제 응답에 영향 없음
+    notificationService.notifyAdminNewOrder(order, twilioClient).catch((err) =>
+      console.error('[Notification] notifyAdminNewOrder error:', err.message)
+    );
 
     res.json({
       ok: true,
