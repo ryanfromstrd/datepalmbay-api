@@ -5201,8 +5201,8 @@ app.post('/datepalm-bay/api/mvp/paypal/capture-order', async (req, res) => {
 
     console.log(`✅ PayPal 결제 완료: ${order.orderId}`);
 
-    // 관리자 알림 (이메일 + SMS) — 비동기, 실패해도 결제 응답에 영향 없음
-    notificationService.notifyAdminNewOrder(order, twilioClient).catch((err) =>
+    // 관리자 텔레그램 알림 — 비동기, 실패해도 결제 응답에 영향 없음
+    notificationService.notifyAdminNewOrder(order).catch((err) =>
       console.error('[Notification] notifyAdminNewOrder error:', err.message)
     );
 
