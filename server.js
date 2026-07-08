@@ -26,14 +26,13 @@ const notificationService = require('./services/notification');
 // MySQL Database 서비스
 const database = require('./services/database');
 // Twilio Verify 서비스 — 환경변수 정규식 정제 (비허용 문자 제거)
-const TWILIO_ACCOUNT_SID = (process.env.TWILIO_ACCOUNT_SID || '').replace(/[^a-zA-Z0-9]/g, '');
-const TWILIO_AUTH_TOKEN = (process.env.TWILIO_AUTH_TOKEN || '').replace(/[^a-f0-9]/gi, '');
-const TWILIO_VERIFY_SID = (process.env.TWILIO_VERIFY_SERVICE_SID || '').replace(/[^a-zA-Z0-9]/g, '');
+const TWILIO_ACCOUNT_SID = (process.env.TWILIO_ACCOUNT_SID || '').replace(/\s/g, '');
+const TWILIO_AUTH_TOKEN = (process.env.TWILIO_AUTH_TOKEN || '').replace(/\s/g, '');
+const TWILIO_VERIFY_SID = (process.env.TWILIO_VERIFY_SERVICE_SID || '').replace(/\s/g, '');
 const twilioClient = TWILIO_ACCOUNT_SID && TWILIO_AUTH_TOKEN
   ? require('twilio')(TWILIO_ACCOUNT_SID, TWILIO_AUTH_TOKEN)
   : null;
-const _rawToken = process.env.TWILIO_AUTH_TOKEN || '';
-console.log(`[Twilio] SID=${TWILIO_ACCOUNT_SID ? TWILIO_ACCOUNT_SID.slice(0,6)+'...' : 'MISSING'} TOKEN_RAW_LEN=${_rawToken.length} TOKEN_AFTER_REGEX=${TWILIO_AUTH_TOKEN.length}chars VERIFY_SID=${TWILIO_VERIFY_SID ? TWILIO_VERIFY_SID.slice(0,6)+'...' : 'MISSING'} client=${twilioClient ? 'OK' : 'NULL'}`);
+console.log(`[Twilio] SID=${TWILIO_ACCOUNT_SID ? TWILIO_ACCOUNT_SID.slice(0,4)+'...' : 'MISSING'} TOKEN=${TWILIO_AUTH_TOKEN ? TWILIO_AUTH_TOKEN.length+'chars' : 'MISSING'} VERIFY=${TWILIO_VERIFY_SID ? TWILIO_VERIFY_SID.slice(0,4)+'...' : 'MISSING'} client=${twilioClient ? 'OK' : 'NULL'}`);
 
 let _useMySQL = false;
 let _saveTimer = null;
