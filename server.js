@@ -32,7 +32,8 @@ const TWILIO_VERIFY_SID = (process.env.TWILIO_VERIFY_SERVICE_SID || '').replace(
 const twilioClient = TWILIO_ACCOUNT_SID && TWILIO_AUTH_TOKEN
   ? require('twilio')(TWILIO_ACCOUNT_SID, TWILIO_AUTH_TOKEN)
   : null;
-console.log(`[Twilio] SID=${TWILIO_ACCOUNT_SID ? TWILIO_ACCOUNT_SID.slice(0,6)+'...' : 'MISSING'} TOKEN=${TWILIO_AUTH_TOKEN ? TWILIO_AUTH_TOKEN.length+'chars' : 'MISSING'} VERIFY_SID=${TWILIO_VERIFY_SID ? TWILIO_VERIFY_SID.slice(0,6)+'...' : 'MISSING'} client=${twilioClient ? 'OK' : 'NULL'}`);
+const _rawToken = process.env.TWILIO_AUTH_TOKEN || '';
+console.log(`[Twilio] SID=${TWILIO_ACCOUNT_SID ? TWILIO_ACCOUNT_SID.slice(0,6)+'...' : 'MISSING'} TOKEN_RAW_LEN=${_rawToken.length} TOKEN_AFTER_REGEX=${TWILIO_AUTH_TOKEN.length}chars VERIFY_SID=${TWILIO_VERIFY_SID ? TWILIO_VERIFY_SID.slice(0,6)+'...' : 'MISSING'} client=${twilioClient ? 'OK' : 'NULL'}`);
 
 let _useMySQL = false;
 let _saveTimer = null;
