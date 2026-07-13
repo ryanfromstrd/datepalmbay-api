@@ -4914,14 +4914,10 @@ app.delete('/datepalm-bay/api/admin/sns-reviews/:productCode/summary-override', 
 });
 
 // 기존 상품 + 승인된 SNS 리뷰 AR/FR 일괄 번역 백필 (이 기능 도입 이전 데이터용, 1회성 수동 실행)
-// 한 번 호출에 최대 limit개(기본 20)만 처리 — 이미 번역된(해시 일치) 항목은 건너뛰므로 완료될 때까지 반복 호출하면 됨
-app.post('/datepalm-bay/api/admin/tools/translate-backfill', async (req, res) => {
-  const limit = parseInt(req.body?.limit) || 20;
+// 백그라운드로 전체를 끝까지 처리 — HTTP 응답은 즉시 반환하고 진행 상황은 별도 status 엔드포인트로 조회 (Railway 프록시 타임아웃 회피)
+const backfillState = { running: false, total: { products: 0, reviews: 0 }, processed: { products: 0, reviews: 0 }, startedAt: null, finishedAt: null, lastError: null };
 
-  if (!contentTranslator.isAvailable()) {
-    return res.status(400).json({ ok: false, data: null, message: 'Content translator not configured (ANTHROPIC_API_KEY / AI_PROVIDER=claude required)' });
-  }
-
+async function runTranslateBackfill() {
   const pendingProducts = products.filter((p) => {
     const fields = { productName: p.productName || '', introduction: p.introduction || '', detailInfo: p.detailInfo || '', deliveryPolicy: p.policy?.deliveryPolicy || '', exchangePolicy: p.policy?.exchangePolicy || '', refundPolicy: p.policy?.refundPolicy || '' };
     const hash = contentTranslator.hashFields(fields);
@@ -4934,41 +4930,55 @@ app.post('/datepalm-bay/api/admin/tools/translate-backfill', async (req, res) =>
     return contentTranslator.SUPPORTED_LANGS.some((lang) => r.translations?.[lang]?.sourceHash !== hash);
   });
 
-  console.log(`🌐 번역 백필 시작: 대기중 상품 ${pendingProducts.length}개, SNS 리뷰 ${pendingReviews.length}개 (이번 호출 최대 ${limit}개 처리)`);
+  backfillState.running = true;
+  backfillState.total = { products: pendingProducts.length, reviews: pendingReviews.length };
+  backfillState.processed = { products: 0, reviews: 0 };
+  backfillState.startedAt = new Date().toISOString();
+  backfillState.finishedAt = null;
+  backfillState.lastError = null;
 
-  let processed = { products: 0, reviews: 0 };
+  console.log(`🌐 번역 백필 시작: 상품 ${pendingProducts.length}개, SNS 리뷰 ${pendingReviews.length}개`);
+
   let changedAny = false;
+  try {
+    for (const product of pendingProducts) {
+      const changed = await contentTranslator.translateProductFields(product);
+      if (changed) changedAny = true;
+      backfillState.processed.products++;
+      if (backfillState.processed.products % 5 === 0) await _saveDataImpl(); // 중간 저장 (중단돼도 진행분 보존)
+    }
+    for (const review of pendingReviews) {
+      const changed = await contentTranslator.translateSnsReviewFields(review);
+      if (changed) changedAny = true;
+      backfillState.processed.reviews++;
+      if (backfillState.processed.reviews % 5 === 0) await _saveDataImpl();
+    }
+    if (changedAny) await _saveDataImpl();
+    console.log(`🌐 번역 백필 완료: 상품 ${backfillState.processed.products}개, 리뷰 ${backfillState.processed.reviews}개 처리`);
+  } catch (err) {
+    backfillState.lastError = err.message;
+    console.error('❌ 번역 백필 중 오류:', err.message);
+  } finally {
+    backfillState.running = false;
+    backfillState.finishedAt = new Date().toISOString();
+  }
+}
 
-  for (const product of pendingProducts) {
-    if (processed.products + processed.reviews >= limit) break;
-    const changed = await contentTranslator.translateProductFields(product);
-    if (changed) changedAny = true;
-    processed.products++;
+app.post('/datepalm-bay/api/admin/tools/translate-backfill', (req, res) => {
+  if (!contentTranslator.isAvailable()) {
+    return res.status(400).json({ ok: false, data: null, message: 'Content translator not configured (ANTHROPIC_API_KEY / AI_PROVIDER=claude required)' });
+  }
+  if (backfillState.running) {
+    return res.json({ ok: true, data: backfillState, message: 'Backfill already running' });
   }
 
-  for (const review of pendingReviews) {
-    if (processed.products + processed.reviews >= limit) break;
-    const changed = await contentTranslator.translateSnsReviewFields(review);
-    if (changed) changedAny = true;
-    processed.reviews++;
-  }
+  runTranslateBackfill(); // fire-and-forget — 응답 기다리지 않고 백그라운드로 끝까지 진행
 
-  if (changedAny) await _saveDataImpl();
+  res.json({ ok: true, data: backfillState, message: 'Backfill started in background. Poll GET /admin/tools/translate-backfill/status for progress.' });
+});
 
-  const remainingProducts = pendingProducts.length - processed.products;
-  const remainingReviews = pendingReviews.length - processed.reviews;
-
-  console.log(`🌐 번역 백필 이번 호출 완료: 상품 ${processed.products}개, 리뷰 ${processed.reviews}개 처리. 남음: 상품 ${remainingProducts}개, 리뷰 ${remainingReviews}개`);
-
-  res.json({
-    ok: true,
-    data: {
-      processed,
-      remaining: { products: remainingProducts, reviews: remainingReviews },
-      done: remainingProducts === 0 && remainingReviews === 0,
-    },
-    message: `이번 호출에서 상품 ${processed.products}개, SNS 리뷰 ${processed.reviews}개 번역 처리. 남은 항목이 있으면 다시 호출하세요.`,
-  });
+app.get('/datepalm-bay/api/admin/tools/translate-backfill/status', (req, res) => {
+  res.json({ ok: true, data: backfillState, message: 'Backfill status' });
 });
 
 // Claude AI 수동 재분석 트리거
