@@ -13,6 +13,8 @@ const snsCollector = require('./services/snsReviewCollector');
 const reviewSummarizer = require('./services/reviewSummarizer');
 // Claude AI 리뷰 분석 서비스
 const claudeReviewSummarizer = require('./services/claudeReviewSummarizer');
+// 상품 설명 / SNS 리뷰 다국어(AR/FR) 번역 서비스
+const contentTranslator = require('./services/contentTranslator');
 // PayPal 결제 서비스
 const paypalService = require('./services/paypal');
 // FedEx 물류 서비스
@@ -884,6 +886,11 @@ app.post('/datepalm-bay/api/admin/product/create', upload.fields([
     console.log('=== 상품 생성 성공 ===');
     console.log('생성된 상품:', newProduct);
 
+    // 상품 설명 AR/FR 번역 (백그라운드 — 응답은 기다리지 않음)
+    contentTranslator.translateProductFields(newProduct)
+      .then((changed) => { if (changed) saveData(); })
+      .catch((err) => console.error('[Translation] 상품 번역 실패:', err.message));
+
     res.json({
       ok: true,
       data: productCode,
@@ -1169,6 +1176,12 @@ app.put('/datepalm-bay/api/admin/product/edit', upload.fields([
 
     console.log('=== 상품 수정 성공 ===');
     console.log('수정된 상품:', products[productIndex]);
+
+    // 상품 설명 AR/FR 번역 (원본 텍스트가 바뀐 경우에만 재번역, 백그라운드 실행)
+    contentTranslator.translateProductFields(products[productIndex])
+      .then((changed) => { if (changed) saveData(); })
+      .catch((err) => console.error('[Translation] 상품 번역 실패:', err.message));
+
     res.json({
       ok: true,
       data: requestData.code,
@@ -1997,6 +2010,7 @@ app.get('/datepalm-bay/api/mvp/product/normal/list', (req, res) => {
   const pageNo = parseInt(req.query.pageNo) || 0;
   const pageSize = parseInt(req.query.pageSize) || 10;
   const { sortType, category } = req.query;
+  const lang = (req.query.lang || 'en').toLowerCase();
 
   console.log('필터 조건:', { pageNo, pageSize, sortType, category });
 
@@ -2023,19 +2037,22 @@ app.get('/datepalm-bay/api/mvp/product/normal/list', (req, res) => {
   const end = start + pageSize;
   const paginatedProducts = filteredProducts.slice(start, end);
 
-  // 프론트엔드가 기대하는 형식으로 변환
-  const formattedProducts = paginatedProducts.map(p => ({
-    code: p.productCode,
-    name: p.productName,
-    productNote: '',
-    regularPrice: p.productRegularPrice,
-    discountPrice: p.productDiscountPrice,
-    discountType: p.discountType,
-    summary: p.introduction,
-    price: p.productPrice,
-    thumbnailUrl: p.files?.mainImages?.[0]?.url || '',  // 첫 번째 main image 사용
-    brand: p.brand || ''
-  }));
+  // 프론트엔드가 기대하는 형식으로 변환 (lang이 ar/fr이고 번역이 있으면 치환, 없으면 영어 원본 폴백)
+  const formattedProducts = paginatedProducts.map(p => {
+    const t = contentTranslator.isSupportedLang(lang) ? p.translations?.[lang] : null;
+    return {
+      code: p.productCode,
+      name: t?.productName || p.productName,
+      productNote: '',
+      regularPrice: p.productRegularPrice,
+      discountPrice: p.productDiscountPrice,
+      discountType: p.discountType,
+      summary: t?.introduction || p.introduction,
+      price: p.productPrice,
+      thumbnailUrl: p.files?.mainImages?.[0]?.url || '',  // 첫 번째 main image 사용
+      brand: p.brand || ''
+    };
+  });
 
   console.log(`페이지: ${pageNo}, 크기: ${pageSize}`);
   console.log(`총 ${filteredProducts.length}개 상품 중 ${formattedProducts.length}개 반환`);
@@ -2064,7 +2081,8 @@ app.get('/datepalm-bay/api/mvp/product/normal/list', (req, res) => {
 app.get('/datepalm-bay/api/mvp/product/normal/detail/:code', (req, res) => {
   console.log('\n=== [프론트] 상품 상세 조회 ===');
   const { code } = req.params;
-  console.log(`상품 코드: ${code}`);
+  const lang = (req.query.lang || 'en').toLowerCase();
+  console.log(`상품 코드: ${code}, lang: ${lang}`);
 
   const product = products.find(p => p.productCode === code && p.productSaleStatus === true);
 
@@ -2093,16 +2111,19 @@ app.get('/datepalm-bay/api/mvp/product/normal/detail/:code', (req, res) => {
     });
   }
 
+  // lang이 ar/fr이고 번역이 있으면 치환, 없으면 영어 원본 폴백
+  const t = contentTranslator.isSupportedLang(lang) ? product.translations?.[lang] : null;
+
   const detailResponse = {
     code: product.productCode,
-    name: product.productName,
+    name: t?.productName || product.productName,
     productNote: '',
     discountType: product.discountType,
     regularPrice: product.productRegularPrice,
     discountPrice: product.productDiscountPrice,
     price: product.productPrice,
     thumbnailUrl: thumbnailUrl,
-    summary: product.introduction || '',
+    summary: t?.introduction || product.introduction || '',
     mainImages: mainImages.map(img => ({
       code: img.code,
       name: img.url.split('/').pop() || 'image',
@@ -2115,10 +2136,10 @@ app.get('/datepalm-bay/api/mvp/product/normal/detail/:code', (req, res) => {
       url: img.url,
       order: img.order
     })),
-    detailInfo: product.detailInfo || '',
-    deliveryPolicy: product.policy?.deliveryPolicy || '',
-    refundPolicy: product.policy?.refundPolicy || '',
-    exchangePolicy: product.policy?.exchangePolicy || '',
+    detailInfo: t?.detailInfo || product.detailInfo || '',
+    deliveryPolicy: t?.deliveryPolicy || product.policy?.deliveryPolicy || '',
+    refundPolicy: t?.refundPolicy || product.policy?.refundPolicy || '',
+    exchangePolicy: t?.exchangePolicy || product.policy?.exchangePolicy || '',
     canReviewWrite: false,
     groupBuyTiers: product.groupBuyTiers || [],
     productOptions: product.productOptions || [],
@@ -4213,8 +4234,9 @@ app.get('/datepalm-bay/api/admin/sns-reviews/stats', (req, res) => {
 app.get('/datepalm-bay/api/mvp/product/:productCode/sns-reviews', (req, res) => {
   const { productCode } = req.params;
   const { platform, pageNo = 0, pageSize = 3 } = req.query;
+  const lang = (req.query.lang || 'en').toLowerCase();
 
-  console.log(`📱 SNS Reviews requested for product: ${productCode}, platform: ${platform || 'ALL'}, page: ${pageNo}`);
+  console.log(`📱 SNS Reviews requested for product: ${productCode}, platform: ${platform || 'ALL'}, page: ${pageNo}, lang: ${lang}`);
 
   let filtered = snsReviews.filter(r =>
     r.status === 'APPROVED' &&
@@ -4230,7 +4252,14 @@ app.get('/datepalm-bay/api/mvp/product/:productCode/sns-reviews', (req, res) => 
 
   const total = filtered.length;
   const start = parseInt(pageNo) * parseInt(pageSize);
-  const paged = filtered.slice(start, start + parseInt(pageSize));
+  const pagedRaw = filtered.slice(start, start + parseInt(pageSize));
+
+  // lang이 ar/fr이고 번역이 있으면 title/description 치환, 없으면 영어 원본 폴백
+  const paged = pagedRaw.map((r) => {
+    const t = contentTranslator.isSupportedLang(lang) ? r.translations?.[lang] : null;
+    if (!t) return r;
+    return { ...r, title: t.title || r.title, description: t.description || r.description };
+  });
 
   console.log(`Found ${paged.length}/${total} SNS reviews for product ${productCode} (page ${pageNo})`);
 
@@ -4252,8 +4281,9 @@ app.get('/datepalm-bay/api/mvp/product/:productCode/sns-reviews', (req, res) => 
 // 상품별 SNS 리뷰 요약 (오버라이드 → Claude AI → 키워드 fallback)
 app.get('/datepalm-bay/api/mvp/product/:productCode/sns-reviews/summary', async (req, res) => {
   const { productCode } = req.params;
+  const lang = (req.query.lang || 'en').toLowerCase();
 
-  console.log(`📊 SNS Review Summary requested for product: ${productCode}`);
+  console.log(`📊 SNS Review Summary requested for product: ${productCode}, lang: ${lang}`);
 
   // 승인된 리뷰만 필터링
   const approvedReviews = snsReviews.filter(r =>
@@ -4296,6 +4326,25 @@ app.get('/datepalm-bay/api/mvp/product/:productCode/sns-reviews/summary', async 
         sentiment: rawSummary.sentiment || { positiveRatio: 0, negativeRatio: 0 },
         aiProvider: rawSummary.aiProvider,
       };
+    }
+
+    // AR/FR 요청 시 요약 텍스트 번역 (productInsights에 언어별로 캐싱 — sns-reviews summary map을 그대로 확장)
+    if (contentTranslator.isSupportedLang(lang) && summary.summary?.en) {
+      const insight = productInsights.find(i => i.productCode === productCode);
+      if (insight?.summary?.[lang]) {
+        summary.summary[lang] = insight.summary[lang];
+      } else {
+        try {
+          const translated = await contentTranslator.translateText(summary.summary.en, lang);
+          summary.summary[lang] = translated;
+          if (insight) {
+            insight.summary[lang] = translated;
+            saveData();
+          }
+        } catch (err) {
+          console.error(`[Translation] SNS 요약 번역 실패 (${productCode} → ${lang}):`, err.message);
+        }
+      }
     }
 
     res.json({
@@ -4368,6 +4417,20 @@ app.get('/datepalm-bay/api/admin/sns-reviews', (req, res) => {
 });
 
 // 어드민: SNS 리뷰 상태 변경 (승인/거절)
+// 승인된 SNS 리뷰 AR/FR 번역 — 백그라운드로 순차 실행 (Claude API 부하 방지), 완료 시 한 번만 저장
+async function translateApprovedReviewsAsync(reviews) {
+  let changedAny = false;
+  for (const review of reviews) {
+    try {
+      const changed = await contentTranslator.translateSnsReviewFields(review);
+      if (changed) changedAny = true;
+    } catch (err) {
+      console.error(`[Translation] SNS 리뷰 번역 실패 (id=${review.id}):`, err.message);
+    }
+  }
+  if (changedAny) saveData();
+}
+
 app.put('/datepalm-bay/api/admin/sns-reviews/:id/status', (req, res) => {
   const { id } = req.params;
   const { status } = req.body;
@@ -4394,6 +4457,10 @@ app.put('/datepalm-bay/api/admin/sns-reviews/:id/status', (req, res) => {
 
   snsReviews[reviewIndex].status = status.toUpperCase();
   saveData(); // 파일에 저장
+
+  if (snsReviews[reviewIndex].status === 'APPROVED') {
+    translateApprovedReviewsAsync([snsReviews[reviewIndex]]);
+  }
 
   console.log(`SNS Review ${id} status updated to ${status.toUpperCase()}`);
 
@@ -4476,6 +4543,7 @@ app.put('/datepalm-bay/api/admin/sns-reviews/approve-all', (req, res) => {
   // 파일 저장
   if (approvedCount > 0) {
     saveData();
+    translateApprovedReviewsAsync(targetReviews);
   }
 
   console.log(`✅ ${approvedCount} reviews approved`);
@@ -4518,6 +4586,9 @@ app.put('/datepalm-bay/api/admin/sns-reviews/bulk-action', (req, res) => {
 
   if (processedCount > 0) {
     saveData();
+    if (action === 'APPROVED') {
+      translateApprovedReviewsAsync(snsReviews.filter((r) => ids.includes(r.id)));
+    }
   }
 
   const actionLabel = action === 'DELETE' ? 'deleted' : action === 'APPROVED' ? 'approved' : 'rejected';
@@ -4704,6 +4775,7 @@ app.post('/datepalm-bay/api/admin/sns-reviews/manual', async (req, res) => {
 
     snsReviews.push(newReview);
     saveData();
+    translateApprovedReviewsAsync([newReview]);
 
     console.log(`✅ Manual review added: ${newReview.id}`);
 
@@ -4838,6 +4910,64 @@ app.delete('/datepalm-bay/api/admin/sns-reviews/:productCode/summary-override', 
   res.json({
     ok: true,
     message: 'Summary override deleted, auto-generated summary restored'
+  });
+});
+
+// 기존 상품 + 승인된 SNS 리뷰 AR/FR 일괄 번역 백필 (이 기능 도입 이전 데이터용, 1회성 수동 실행)
+// 한 번 호출에 최대 limit개(기본 20)만 처리 — 이미 번역된(해시 일치) 항목은 건너뛰므로 완료될 때까지 반복 호출하면 됨
+app.post('/datepalm-bay/api/admin/tools/translate-backfill', async (req, res) => {
+  const limit = parseInt(req.body?.limit) || 20;
+
+  if (!contentTranslator.isAvailable()) {
+    return res.status(400).json({ ok: false, data: null, message: 'Content translator not configured (ANTHROPIC_API_KEY / AI_PROVIDER=claude required)' });
+  }
+
+  const pendingProducts = products.filter((p) => {
+    const fields = { productName: p.productName || '', introduction: p.introduction || '', detailInfo: p.detailInfo || '', deliveryPolicy: p.policy?.deliveryPolicy || '', exchangePolicy: p.policy?.exchangePolicy || '', refundPolicy: p.policy?.refundPolicy || '' };
+    const hash = contentTranslator.hashFields(fields);
+    return contentTranslator.SUPPORTED_LANGS.some((lang) => p.translations?.[lang]?.sourceHash !== hash);
+  });
+  const pendingReviews = snsReviews.filter((r) => {
+    if (r.status !== 'APPROVED') return false;
+    const fields = { title: r.title || '', description: r.description || '' };
+    const hash = contentTranslator.hashFields(fields);
+    return contentTranslator.SUPPORTED_LANGS.some((lang) => r.translations?.[lang]?.sourceHash !== hash);
+  });
+
+  console.log(`🌐 번역 백필 시작: 대기중 상품 ${pendingProducts.length}개, SNS 리뷰 ${pendingReviews.length}개 (이번 호출 최대 ${limit}개 처리)`);
+
+  let processed = { products: 0, reviews: 0 };
+  let changedAny = false;
+
+  for (const product of pendingProducts) {
+    if (processed.products + processed.reviews >= limit) break;
+    const changed = await contentTranslator.translateProductFields(product);
+    if (changed) changedAny = true;
+    processed.products++;
+  }
+
+  for (const review of pendingReviews) {
+    if (processed.products + processed.reviews >= limit) break;
+    const changed = await contentTranslator.translateSnsReviewFields(review);
+    if (changed) changedAny = true;
+    processed.reviews++;
+  }
+
+  if (changedAny) await _saveDataImpl();
+
+  const remainingProducts = pendingProducts.length - processed.products;
+  const remainingReviews = pendingReviews.length - processed.reviews;
+
+  console.log(`🌐 번역 백필 이번 호출 완료: 상품 ${processed.products}개, 리뷰 ${processed.reviews}개 처리. 남음: 상품 ${remainingProducts}개, 리뷰 ${remainingReviews}개`);
+
+  res.json({
+    ok: true,
+    data: {
+      processed,
+      remaining: { products: remainingProducts, reviews: remainingReviews },
+      done: remainingProducts === 0 && remainingReviews === 0,
+    },
+    message: `이번 호출에서 상품 ${processed.products}개, SNS 리뷰 ${processed.reviews}개 번역 처리. 남은 항목이 있으면 다시 호출하세요.`,
   });
 });
 
@@ -7102,6 +7232,9 @@ async function startServer() {
     onSave: saveData,
   });
 
+  // 7. 상품/SNS 리뷰 다국어 번역기 초기화
+  contentTranslator.initialize();
+
   console.log(`\n📊 데이터 로드 완료: ${products.length}개 상품, ${brands.length}개 브랜드, ${(customerOrders || []).length}개 주문, ${(members || []).length}개 회원`);
 
   // 5. 서버 시작
@@ -7123,6 +7256,7 @@ async function startServer() {
     console.log(`  Instagram API: ${process.env.INSTAGRAM_ACCESS_TOKEN && process.env.INSTAGRAM_BUSINESS_ACCOUNT_ID ? '✅ Configured' : '⚠️  Not configured (optional)'}`);
     console.log(`  FedEx API: ${process.env.FEDEX_API_KEY && process.env.FEDEX_SECRET_KEY ? '✅ Configured' : '⚠️  Not configured (optional)'}`);
     console.log(`  Claude AI: ${claudeReviewSummarizer.isClaudeAvailable() ? '✅ Connected (provider: claude)' : '⚠️  Not configured (keyword fallback)'}`);
+    console.log(`  Content Translator (AR/FR): ${contentTranslator.isAvailable() ? '✅ Connected' : '⚠️  Not configured'}`);
     console.log('');
   });
 }
