@@ -2777,9 +2777,82 @@ app.get('/datepalm-bay/api/mvp/member/detail/me', (req, res) => {
       createAt: user.createAt,
       country: user.country || '',
       currency: currencyService.getMemberCurrency(user.country || ''),
+      defaultShippingAddress: user.defaultShippingAddress || null,
     },
     message: 'User profile retrieved successfully'
   });
+});
+
+// 기본 배송지 저장/조회/삭제 — 로그인 계정에 귀속되어 기기와 무관하게 재사용 가능
+app.put('/datepalm-bay/api/mvp/member/default-address', (req, res) => {
+  console.log('\n=== [Member] Save Default Shipping Address ===');
+
+  const authHeader = req.headers.authorization;
+  if (!authHeader) {
+    return res.status(401).json({ ok: false, data: null, message: 'Authorization token required' });
+  }
+
+  const token = authHeader.replace('Bearer ', '');
+  const userId = extractUserIdFromToken(token);
+  if (!userId) {
+    return res.status(401).json({ ok: false, data: null, message: 'Session expired' });
+  }
+
+  const user = users.find(u => u.id === userId || u.code === userId);
+  if (!user) {
+    return res.status(404).json({ ok: false, data: null, message: 'User not found' });
+  }
+
+  const address = req.body.data || req.body;
+  const {
+    recipientFirstName, recipientLastName, recipientCountryCode, recipientContact, recipientEmail,
+    postalCode, address: addressLine, detailAddress, city, stateOrProvince, destinationCountry, deliveryMemo,
+  } = address || {};
+
+  user.defaultShippingAddress = {
+    recipientFirstName: recipientFirstName || '',
+    recipientLastName: recipientLastName || '',
+    recipientCountryCode: recipientCountryCode || '',
+    recipientContact: recipientContact || '',
+    recipientEmail: recipientEmail || '',
+    postalCode: postalCode || '',
+    address: addressLine || '',
+    detailAddress: detailAddress || '',
+    city: city || '',
+    stateOrProvince: stateOrProvince || '',
+    destinationCountry: destinationCountry || '',
+    deliveryMemo: deliveryMemo || '',
+  };
+  saveData();
+
+  console.log(`✅ Default shipping address saved for ${user.id}`);
+  res.json({ ok: true, data: user.defaultShippingAddress, message: 'Default shipping address saved' });
+});
+
+app.delete('/datepalm-bay/api/mvp/member/default-address', (req, res) => {
+  console.log('\n=== [Member] Remove Default Shipping Address ===');
+
+  const authHeader = req.headers.authorization;
+  if (!authHeader) {
+    return res.status(401).json({ ok: false, data: null, message: 'Authorization token required' });
+  }
+
+  const token = authHeader.replace('Bearer ', '');
+  const userId = extractUserIdFromToken(token);
+  if (!userId) {
+    return res.status(401).json({ ok: false, data: null, message: 'Session expired' });
+  }
+
+  const user = users.find(u => u.id === userId || u.code === userId);
+  if (!user) {
+    return res.status(404).json({ ok: false, data: null, message: 'User not found' });
+  }
+
+  delete user.defaultShippingAddress;
+  saveData();
+
+  console.log(`✅ Default shipping address removed for ${user.id}`);
+  res.json({ ok: true, data: null, message: 'Default shipping address removed' });
 });
 
 // 민감 작업(결제, 내 정보 수정) 진입 전 비밀번호 재확인
