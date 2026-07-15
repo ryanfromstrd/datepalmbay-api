@@ -84,7 +84,7 @@ async function waitForMySQL(maxRetries = 5) {
 // 데이터 로드 함수 (MySQL → JSON 파일 → 빈 저장소)
 // ========================================
 async function loadData() {
-  const emptyData = { products: [], snsReviews: [], brands: [], orders: null, members: null, users: null, userCoupons: null, coupons: null, groupBuyTeams: [], events: null, snsReviewOverrides: [], productInsights: [], aiFeedbackHistory: [] };
+  const emptyData = { products: [], snsReviews: [], brands: [], orders: null, members: null, users: null, userCoupons: null, coupons: null, groupBuyTeams: [], events: null, snsReviewOverrides: [], productInsights: [], aiFeedbackHistory: [], sellers: [], settlements: [], platformSettings: null };
 
   // 1단계: MySQL에서 로드 시도
   if (_useMySQL) {
@@ -108,6 +108,9 @@ async function loadData() {
           productInsights: mysqlData.productInsights || [],
           aiFeedbackHistory: mysqlData.aiFeedbackHistory || [],
           b2bUsers: mysqlData.b2bUsers || [],
+          sellers: mysqlData.sellers || [],
+          settlements: mysqlData.settlements || [],
+          platformSettings: mysqlData.platformSettings || null,
         };
       }
       console.log('🗄️  MySQL 비어있음, JSON 파일 확인...');
@@ -157,6 +160,13 @@ async function loadData() {
         groupBuyTeams: data.groupBuyTeams || [],
         events: data.events || null,
         banners: data.banners || [],
+        snsReviewOverrides: data.snsReviewOverrides || [],
+        productInsights: data.productInsights || [],
+        aiFeedbackHistory: data.aiFeedbackHistory || [],
+        b2bUsers: data.b2bUsers || [],
+        sellers: data.sellers || [],
+        settlements: data.settlements || [],
+        platformSettings: data.platformSettings || null,
       };
     } catch (e) {
       console.error('❌ JSON 데이터 로드 실패:', e.message);
@@ -195,6 +205,9 @@ async function _saveDataImpl() {
     productInsights: productInsights,
     aiFeedbackHistory: aiFeedbackHistory,
     b2bUsers: b2bUsers,
+    sellers: sellers,
+    settlements: settlements,
+    platformSettings: platformSettings,
   };
 
   if (_useMySQL) {
@@ -454,6 +467,9 @@ const handleMulterError = (err, req, res, next) => {
 let products = [];
 let brands = [];
 let b2bUsers = [];
+let sellers = [];
+let settlements = [];
+let platformSettings = { defaultCommissionRate: 13.5 }; // 판매수수료 기본 요율(%) — 셀러별 commissionRateOverride가 우선
 
 // B2B 세션 스토어 (in-memory, 서버 재시작 시 초기화 → 재로그인 필요)
 const b2bSessions = new Map(); // token → { userId, companyName, discountPercent }
@@ -468,6 +484,91 @@ function validateB2BToken(req) {
   if (!token) return null;
   return b2bSessions.get(token) || null;
 }
+
+// ========================================
+// 셀러(입점 브랜드사) 세션 (B2B 패턴 복제)
+// ========================================
+const sellerSessions = new Map(); // token → { sellerId, companyName }
+
+function generateSellerToken() {
+  return `seller_${Date.now()}_${Math.random().toString(36).substring(2, 10)}`;
+}
+
+// 셀러 세션이면 { sellerId, companyName }, 아니면 null(플랫폼 운영자로 간주)
+// — FE가 셀러 토큰을 admin_token 키에 저장해 기존 admin 엔드포인트를 그대로 호출하므로,
+//   각 핸들러는 이 스코프로 데이터 범위를 제한한다.
+function getSellerScope(req) {
+  const auth = req.headers['authorization'];
+  const token = auth ? auth.replace(/^Bearer\s+/i, '') : null;
+  if (!token) return null;
+  return sellerSessions.get(token) || null;
+}
+
+function getEffectiveCommissionRate(seller) {
+  return seller && seller.commissionRateOverride != null
+    ? seller.commissionRateOverride
+    : platformSettings.defaultCommissionRate;
+}
+
+// 셀러 소유 상품 코드 집합 (요청 시점 계산 — 상품 수가 mock 규모라 캐싱 불필요)
+function getSellerProductCodes(sellerId) {
+  return new Set(products.filter(p => p.sellerId === sellerId).map(p => p.productCode));
+}
+
+// 주문이 셀러 소유 상품을 하나라도 포함하는지 (번들은 bundleItems, 단일/레거시는 productCode 콤마 분해)
+function orderBelongsToSeller(order, sellerCodes) {
+  if (Array.isArray(order.bundleItems) && order.bundleItems.length > 0) {
+    return order.bundleItems.some(i => sellerCodes.has(i.productCode));
+  }
+  return String(order.productCode || '').split(',').some(c => sellerCodes.has(c.trim()));
+}
+
+// 번들 주문에서 타 셀러 상품 라인을 제거한 사본 반환 (셀러에게 타사 매출 노출 방지)
+function maskOrderForSeller(order, sellerCodes) {
+  if (!Array.isArray(order.bundleItems) || order.bundleItems.length === 0) return order;
+  return { ...order, bundleItems: order.bundleItems.filter(i => sellerCodes.has(i.productCode)) };
+}
+
+// 주문에서 셀러 귀속 상품금액 라인(USD) 추출 — 배송비 제외, 쿠폰 할인은 플랫폼 부담(상품금액에 되더해 복원)
+// 주문의 bundleItems[].price / shippingCost / couponDiscount / amountUSD는 전부 USD 기준으로 저장됨
+// (청구통화 변환은 amount/currency/fxRate에만 적용) — 환율 재계산 불필요
+function orderLinesForSeller(order, sellerCodes) {
+  if (Array.isArray(order.bundleItems) && order.bundleItems.length > 0) {
+    return order.bundleItems
+      .filter(i => sellerCodes.has(i.productCode))
+      .map(i => ({
+        productCode: i.productCode,
+        productName: i.productName || products.find(p => p.productCode === i.productCode)?.productName || '',
+        quantity: i.quantity || 1,
+        itemAmountUSD: Math.round((i.price || 0) * (i.quantity || 1) * 100) / 100,
+      }));
+  }
+  const codes = String(order.productCode || '').split(',').map(c => c.trim());
+  if (!codes.some(c => sellerCodes.has(c))) return [];
+  const itemAmountUSD = Math.max(0, (order.amountUSD ?? order.amount ?? 0) - (order.shippingCost || 0) + (order.couponDiscount || 0));
+  return [{
+    productCode: order.productCode,
+    productName: order.productName || '',
+    quantity: order.quantity || 1,
+    itemAmountUSD: Math.round(itemAmountUSD * 100) / 100,
+  }];
+}
+
+// 셀러에게 허용되지 않는 admin 경로 차단 (상품/주문/대시보드만 허용)
+const SELLER_ALLOWED_ADMIN_PREFIXES = [
+  '/datepalm-bay/api/admin/product',
+  '/datepalm-bay/api/admin/order',
+  '/datepalm-bay/api/admin/dashboard',
+];
+
+function sellerAdminGuard(req, res, next) {
+  if (!req.path.startsWith('/datepalm-bay/api/admin')) return next(); // admin 경로만 검사
+  const scope = getSellerScope(req);
+  if (!scope) return next(); // 운영자(또는 비셀러 토큰)는 통과
+  if (SELLER_ALLOWED_ADMIN_PREFIXES.some((p) => req.path.startsWith(p))) return next();
+  return res.status(403).json({ ok: false, data: null, message: 'Sellers are not allowed to access this resource.' });
+}
+app.use(sellerAdminGuard);
 
 // Mock 문의 데이터 저장소
 const contacts = [
@@ -877,6 +978,8 @@ app.post('/datepalm-bay/api/admin/product/create', upload.fields([
       freeShippingThreshold: requestData.freeShippingThreshold || 0,
       // 브랜드
       brand: requestData.brand || '',
+      // 셀러 소유권: 셀러 세션이면 자기 sellerId 강제, 운영자는 body 지정값(없으면 미배정)
+      sellerId: getSellerScope(req)?.sellerId || requestData.sellerId || null,
       createdAt: new Date().toISOString()
     };
 
@@ -1008,6 +1111,7 @@ app.post('/datepalm-bay/api/admin/product/bulk-create', async (req, res) => {
         shippingCost: rowData.shippingCost || 0,
         freeShippingThreshold: rowData.freeShippingThreshold || 0,
         brand: rowData.brand || '',
+        sellerId: getSellerScope(req)?.sellerId || rowData.sellerId || null,
         createdAt: new Date().toISOString(),
       };
 
@@ -1061,6 +1165,15 @@ app.put('/datepalm-bay/api/admin/product/edit', upload.fields([
         data: null,
         message: '상품을 찾을 수 없습니다.'
       });
+    }
+
+    // 셀러는 자기 상품만 수정 가능 (소유권 이관 불가)
+    const scope = getSellerScope(req);
+    if (scope) {
+      if (products[productIndex].sellerId !== scope.sellerId) {
+        return res.status(403).json({ ok: false, data: null, message: 'You do not have access to this product.' });
+      }
+      delete requestData.sellerId;
     }
 
     // 요청 데이터 검증
@@ -1214,6 +1327,18 @@ app.delete('/datepalm-bay/api/admin/product/delete', (req, res) => {
       });
     }
 
+    // 셀러는 자기 상품만 삭제 가능
+    const scope = getSellerScope(req);
+    if (scope) {
+      const notOwned = deleteCodes.filter(code => {
+        const p = products.find(pr => pr.productCode === code);
+        return p && p.sellerId !== scope.sellerId;
+      });
+      if (notOwned.length > 0) {
+        return res.status(403).json({ ok: false, data: null, message: 'You can only delete your own products.' });
+      }
+    }
+
     const deletedCount = deleteCodes.length;
 
     deleteCodes.forEach(code => {
@@ -1318,8 +1443,9 @@ app.get('/datepalm-bay/api/admin/product/list', (req, res) => {
 
   console.log('필터 조건:', { code, name, status, category });
 
-  // 필터링
-  let filteredProducts = [...products];
+  // 필터링 — 셀러 세션이면 자기 상품만
+  const scope = getSellerScope(req);
+  let filteredProducts = scope ? products.filter(p => p.sellerId === scope.sellerId) : [...products];
 
   if (code) {
     filteredProducts = filteredProducts.filter(p =>
@@ -1385,6 +1511,12 @@ app.get('/datepalm-bay/api/admin/product/detail/:code', (req, res) => {
     });
   }
 
+  // 셀러는 자기 상품만 열람 가능
+  const scope = getSellerScope(req);
+  if (scope && product.sellerId !== scope.sellerId) {
+    return res.status(403).json({ ok: false, data: null, message: 'You do not have access to this product.' });
+  }
+
   const mainImages = product.files?.mainImages || [];
   const detailImages = product.files?.detailImages || [];
 
@@ -1422,6 +1554,7 @@ app.get('/datepalm-bay/api/admin/product/detail/:code', (req, res) => {
     shippingCost: product.shippingCost || 0,
     freeShippingThreshold: product.freeShippingThreshold || 0,
     brand: product.brand || '',
+    sellerId: product.sellerId || null,
   };
 
   console.log('조회 성공:', product.productName);
@@ -1438,9 +1571,10 @@ app.get('/datepalm-bay/api/admin/products', (req, res) => {
   console.log('\n=== 상품 전체 목록 조회 ===');
   console.log(`총 ${products.length}개 상품`);
 
+  const scope = getSellerScope(req);
   res.json({
     ok: true,
-    data: products,
+    data: scope ? products.filter(p => p.sellerId === scope.sellerId) : products,
     message: '상품 목록 조회 성공'
   });
 });
@@ -1690,47 +1824,62 @@ function formatAdminOrderDetail(order) {
   };
 }
 
-// 주문 목록 조회 API (실제 customerOrders 사용)
+// 주문 목록 조회 API (실제 customerOrders 사용) — 셀러 세션이면 자기 상품 포함 주문만
 app.get('/datepalm-bay/api/admin/order/list', (req, res) => {
   console.log('\n=== 주문 목록 조회 ===');
   const pageNo = parseInt(req.query.pageNo) || 0;
   const pageSize = parseInt(req.query.pageSize) || 10;
 
-  const sorted = [...customerOrders].sort((a, b) => new Date(b.createdAt) - new Date(a.createdAt));
+  const scope = getSellerScope(req);
+  const sellerCodes = scope ? getSellerProductCodes(scope.sellerId) : null;
+  const visibleOrders = sellerCodes
+    ? customerOrders.filter(o => orderBelongsToSeller(o, sellerCodes)).map(o => maskOrderForSeller(o, sellerCodes))
+    : customerOrders;
+
+  const sorted = [...visibleOrders].sort((a, b) => new Date(b.createdAt) - new Date(a.createdAt));
   const start = pageNo * pageSize;
   const end = start + pageSize;
   const paginatedOrders = sorted.slice(start, end).map(formatAdminOrderListItem);
 
-  console.log(`페이지: ${pageNo}, 크기: ${pageSize}`);
-  console.log(`총 ${customerOrders.length}개 주문 중 ${paginatedOrders.length}개 반환`);
+  console.log(`페이지: ${pageNo}, 크기: ${pageSize}${scope ? ` (셀러: ${scope.companyName})` : ''}`);
+  console.log(`총 ${visibleOrders.length}개 주문 중 ${paginatedOrders.length}개 반환`);
 
   res.json({
     ok: true,
     data: {
       content: paginatedOrders,
       pageable: { pageNumber: pageNo, pageSize },
-      totalElements: customerOrders.length,
-      totalPages: Math.ceil(customerOrders.length / pageSize),
+      totalElements: visibleOrders.length,
+      totalPages: Math.ceil(visibleOrders.length / pageSize),
       size: pageSize,
       number: pageNo,
       first: pageNo === 0,
-      last: pageNo >= Math.floor(customerOrders.length / pageSize),
+      last: pageNo >= Math.floor(visibleOrders.length / pageSize),
       numberOfElements: paginatedOrders.length,
     },
     message: '주문 목록 조회 성공',
   });
 });
 
-// 주문 상세 조회 API
+// 주문 상세 조회 API — 셀러 세션이면 소유 검증 + 번들 마스킹
 app.get('/datepalm-bay/api/admin/order/detail/:code', (req, res) => {
   console.log('\n=== 주문 상세 조회 ===');
   const { code } = req.params;
   console.log(`주문 코드: ${code}`);
 
-  const order = customerOrders.find(o => o.orderId === code);
+  let order = customerOrders.find(o => o.orderId === code);
 
   if (!order) {
     return res.status(404).json({ ok: false, data: null, message: '주문을 찾을 수 없습니다.' });
+  }
+
+  const scope = getSellerScope(req);
+  if (scope) {
+    const sellerCodes = getSellerProductCodes(scope.sellerId);
+    if (!orderBelongsToSeller(order, sellerCodes)) {
+      return res.status(403).json({ ok: false, data: null, message: 'You do not have access to this order.' });
+    }
+    order = maskOrderForSeller(order, sellerCodes);
   }
 
   console.log('조회 성공:', order.orderId);
@@ -1742,9 +1891,12 @@ app.get('/datepalm-bay/api/admin/order/detail/:code', (req, res) => {
   });
 });
 
-// 회원별 주문 목록 조회 API
+// 회원별 주문 목록 조회 API (회원 상세 화면용 — 셀러 접근 불필요)
 app.get('/datepalm-bay/api/admin/order/member-orders', (req, res) => {
   console.log('\n=== 회원별 주문 목록 조회 ===');
+  if (getSellerScope(req)) {
+    return res.status(403).json({ ok: false, data: null, message: 'Sellers are not allowed to access this resource.' });
+  }
   const pageNo = parseInt(req.query.pageNo) || 0;
   const pageSize = parseInt(req.query.pageSize) || 10;
 
@@ -1770,9 +1922,12 @@ app.get('/datepalm-bay/api/admin/order/member-orders', (req, res) => {
   });
 });
 
-// 주문 삭제 API (영구 삭제)
+// 주문 삭제 API (영구 삭제 — 운영자 전용)
 app.delete('/datepalm-bay/api/admin/order/delete', (req, res) => {
   console.log('\n=== 주문 삭제 ===');
+  if (getSellerScope(req)) {
+    return res.status(403).json({ ok: false, data: null, message: 'Sellers are not allowed to delete orders.' });
+  }
   const requestData = req.body.data || req.body;
   const { orderCodes } = requestData;
 
@@ -1790,9 +1945,12 @@ app.delete('/datepalm-bay/api/admin/order/delete', (req, res) => {
   res.json({ ok: true, data: { deleted }, message: `${deleted}개 주문 삭제 완료` });
 });
 
-// 주문 수정 API
+// 주문 수정 API (배송지 등 고객정보 수정 — 운영자 전용)
 app.put('/datepalm-bay/api/admin/order/edit', (req, res) => {
   console.log('\n=== 주문 수정 ===');
+  if (getSellerScope(req)) {
+    return res.status(403).json({ ok: false, data: null, message: 'Sellers are not allowed to edit orders.' });
+  }
   const requestData = req.body.data || req.body;
   const { orderCode, ...updates } = requestData;
 
@@ -1817,7 +1975,9 @@ app.put('/datepalm-bay/api/admin/order/edit', (req, res) => {
   res.json({ ok: true, data: null, message: '주문 수정 완료' });
 });
 
-// 주문 상태 변경 API (주문 취소 등)
+// 주문 상태 변경 API (주문 취소 등) — 셀러는 자기 주문의 배송 전이(SUCCESS→DELIVERY→DELIVERED)만 가능
+const SELLER_ALLOWED_STATUS_TRANSITIONS = { SUCCESS: ['DELIVERY'], DELIVERY: ['DELIVERED'] };
+
 app.put('/datepalm-bay/api/admin/order/status', (req, res) => {
   console.log('\n=== 주문 상태 변경 ===');
   const requestData = req.body.data || req.body;
@@ -1830,17 +1990,31 @@ app.put('/datepalm-bay/api/admin/order/status', (req, res) => {
     return res.status(400).json({ ok: false, data: null, message: 'targetStatus가 필요합니다.' });
   }
 
+  const scope = getSellerScope(req);
+  const sellerCodes = scope ? getSellerProductCodes(scope.sellerId) : null;
+
   let updatedCount = 0;
   orderCodes.forEach(code => {
     const order = customerOrders.find(o => o.orderId === code);
-    if (order) {
-      order.status = targetStatus;
-      updatedCount++;
+    if (!order) return;
+    if (sellerCodes) {
+      if (!orderBelongsToSeller(order, sellerCodes)) return;
+      const allowed = SELLER_ALLOWED_STATUS_TRANSITIONS[order.status] || [];
+      if (!allowed.includes(targetStatus)) return;
     }
+    order.status = targetStatus;
+    if (targetStatus === 'REFUNDED' && !order.refundedAt) {
+      order.refundedAt = new Date().toISOString(); // 정산 시 환불월 판정 기준
+    }
+    updatedCount++;
   });
 
   if (updatedCount === 0) {
-    return res.status(404).json({ ok: false, data: null, message: '주문을 찾을 수 없습니다.' });
+    return res.status(scope ? 403 : 404).json({
+      ok: false,
+      data: null,
+      message: scope ? '변경 가능한 주문이 없습니다. (셀러는 자기 주문의 배송 처리만 가능합니다)' : '주문을 찾을 수 없습니다.',
+    });
   }
 
   saveData();
@@ -1998,6 +2172,423 @@ app.delete('/datepalm-bay/api/admin/b2b/users/delete', (req, res) => {
   }
   saveData();
   res.json({ ok: true, data: null, message: 'B2B user deleted' });
+});
+
+// ========================================
+// 셀러(입점 브랜드사) 인증 & 계정
+// ========================================
+
+// 비밀번호 제외 직렬화
+function serializeSeller(seller) {
+  const { password, ...rest } = seller;
+  return { ...rest, effectiveCommissionRate: getEffectiveCommissionRate(seller) };
+}
+
+// 셀러 로그인
+app.post('/datepalm-bay/api/seller/login', (req, res) => {
+  const { loginId, password } = req.body.data || req.body;
+  if (!loginId || !password) {
+    return res.status(400).json({ ok: false, data: null, message: 'loginId and password are required.' });
+  }
+
+  const seller = sellers.find(s => s.loginId === loginId && s.password === password && s.status === 'ACTIVE');
+  if (!seller) {
+    return res.status(401).json({ ok: false, data: null, message: 'Invalid credentials or account is inactive.' });
+  }
+
+  const token = generateSellerToken();
+  sellerSessions.set(token, { sellerId: seller.sellerId, companyName: seller.companyName });
+
+  console.log(`✅ 셀러 로그인: ${seller.loginId} (${seller.companyName})`);
+
+  res.json({
+    ok: true,
+    data: { token, sellerId: seller.sellerId, companyName: seller.companyName, role: 'seller' },
+    message: 'Login successful',
+  });
+});
+
+// 셀러 로그아웃
+app.post('/datepalm-bay/api/seller/logout', (req, res) => {
+  const auth = req.headers['authorization'];
+  const token = auth ? auth.replace(/^Bearer\s+/i, '') : null;
+  if (token) sellerSessions.delete(token);
+  res.json({ ok: true, data: null, message: 'Logged out' });
+});
+
+// 셀러 내 정보 조회
+app.get('/datepalm-bay/api/seller/me', (req, res) => {
+  const scope = getSellerScope(req);
+  if (!scope) return res.status(401).json({ ok: false, data: null, message: 'Seller authentication required.' });
+
+  const seller = sellers.find(s => s.sellerId === scope.sellerId);
+  if (!seller) return res.status(404).json({ ok: false, data: null, message: 'Seller not found.' });
+
+  res.json({ ok: true, data: serializeSeller(seller), message: 'Seller profile retrieved' });
+});
+
+// 셀러 내 정보 수정 (연락처/지급 정보만 — 요율/상태/loginId는 운영자 전용)
+app.put('/datepalm-bay/api/seller/me', (req, res) => {
+  const scope = getSellerScope(req);
+  if (!scope) return res.status(401).json({ ok: false, data: null, message: 'Seller authentication required.' });
+
+  const seller = sellers.find(s => s.sellerId === scope.sellerId);
+  if (!seller) return res.status(404).json({ ok: false, data: null, message: 'Seller not found.' });
+
+  const { contactName, contactEmail, contactPhone, payout, password } = req.body.data || req.body;
+  if (contactName !== undefined) seller.contactName = contactName;
+  if (contactEmail !== undefined) seller.contactEmail = contactEmail;
+  if (contactPhone !== undefined) seller.contactPhone = contactPhone;
+  if (payout !== undefined) seller.payout = { ...seller.payout, ...payout };
+  if (password) seller.password = password;
+  seller.updatedAt = new Date().toISOString();
+
+  saveData();
+  res.json({ ok: true, data: serializeSeller(seller), message: 'Seller profile updated' });
+});
+
+// ========================================
+// 어드민(플랫폼 운영자) 셀러 관리 API
+// ========================================
+
+// 셀러 목록
+app.get('/datepalm-bay/api/admin/sellers', (req, res) => {
+  res.json({ ok: true, data: sellers.map(serializeSeller), message: 'Sellers retrieved' });
+});
+
+// 셀러 생성
+app.post('/datepalm-bay/api/admin/sellers/create', (req, res) => {
+  const { loginId, password, companyName, brandNames, businessRegNo, contactName, contactEmail, contactPhone, payout, commissionRateOverride } = req.body.data || req.body;
+
+  if (!loginId || !password || !companyName) {
+    return res.status(400).json({ ok: false, data: null, message: 'loginId, password, companyName are required.' });
+  }
+  if (sellers.find(s => s.loginId === loginId)) {
+    return res.status(409).json({ ok: false, data: null, message: 'Seller loginId already exists.' });
+  }
+
+  const newSeller = {
+    sellerId: `SELLER-${Date.now()}`,
+    loginId,
+    password,
+    companyName,
+    brandNames: Array.isArray(brandNames) ? brandNames : [],
+    businessRegNo: businessRegNo || '',
+    contactName: contactName || '',
+    contactEmail: contactEmail || '',
+    contactPhone: contactPhone || '',
+    payout: { bankName: '', accountHolder: '', accountNumber: '', swiftCode: '', ...(payout || {}) },
+    commissionRateOverride: commissionRateOverride != null && commissionRateOverride !== '' ? parseFloat(commissionRateOverride) : null,
+    status: 'ACTIVE',
+    createdAt: new Date().toISOString(),
+    updatedAt: new Date().toISOString(),
+  };
+
+  sellers.push(newSeller);
+  saveData();
+
+  console.log(`✅ 셀러 생성: ${newSeller.loginId} (${newSeller.companyName})`);
+  res.json({ ok: true, data: serializeSeller(newSeller), message: 'Seller created' });
+});
+
+// 셀러 수정
+app.put('/datepalm-bay/api/admin/sellers/edit', (req, res) => {
+  const { sellerId, loginId, password, companyName, brandNames, businessRegNo, contactName, contactEmail, contactPhone, payout, commissionRateOverride, status } = req.body.data || req.body;
+
+  const seller = sellers.find(s => s.sellerId === sellerId);
+  if (!seller) return res.status(404).json({ ok: false, data: null, message: 'Seller not found.' });
+
+  if (loginId !== undefined && loginId !== seller.loginId) {
+    if (sellers.find(s => s.loginId === loginId)) {
+      return res.status(409).json({ ok: false, data: null, message: 'Seller loginId already exists.' });
+    }
+    seller.loginId = loginId;
+  }
+  if (password) seller.password = password;
+  if (companyName !== undefined) seller.companyName = companyName;
+  if (brandNames !== undefined) seller.brandNames = Array.isArray(brandNames) ? brandNames : seller.brandNames;
+  if (businessRegNo !== undefined) seller.businessRegNo = businessRegNo;
+  if (contactName !== undefined) seller.contactName = contactName;
+  if (contactEmail !== undefined) seller.contactEmail = contactEmail;
+  if (contactPhone !== undefined) seller.contactPhone = contactPhone;
+  if (payout !== undefined) seller.payout = { ...seller.payout, ...payout };
+  if (commissionRateOverride !== undefined) {
+    seller.commissionRateOverride = commissionRateOverride != null && commissionRateOverride !== '' ? parseFloat(commissionRateOverride) : null;
+  }
+  if (status !== undefined) seller.status = status;
+  seller.updatedAt = new Date().toISOString();
+
+  saveData();
+  res.json({ ok: true, data: serializeSeller(seller), message: 'Seller updated' });
+});
+
+// 셀러 삭제 (소유 상품은 미배정 상태로 복원)
+app.delete('/datepalm-bay/api/admin/sellers/delete', (req, res) => {
+  const { sellerId } = req.body.data || req.body;
+  const before = sellers.length;
+  sellers = sellers.filter(s => s.sellerId !== sellerId);
+  if (sellers.length === before) {
+    return res.status(404).json({ ok: false, data: null, message: 'Seller not found.' });
+  }
+
+  let released = 0;
+  products.forEach(p => {
+    if (p.sellerId === sellerId) {
+      p.sellerId = null;
+      released++;
+    }
+  });
+
+  saveData();
+  res.json({ ok: true, data: { releasedProducts: released }, message: 'Seller deleted' });
+});
+
+// 브랜드명 기준 상품 일괄 소유권 배정 (기존 상품 마이그레이션용)
+app.post('/datepalm-bay/api/admin/sellers/assign-products', (req, res) => {
+  const { sellerId, brandNames } = req.body.data || req.body;
+
+  const seller = sellers.find(s => s.sellerId === sellerId);
+  if (!seller) return res.status(404).json({ ok: false, data: null, message: 'Seller not found.' });
+  if (!Array.isArray(brandNames) || brandNames.length === 0) {
+    return res.status(400).json({ ok: false, data: null, message: 'brandNames array is required.' });
+  }
+
+  let assigned = 0;
+  products.forEach(p => {
+    if (!p.sellerId && brandNames.includes(p.brand)) {
+      p.sellerId = sellerId;
+      assigned++;
+    }
+  });
+
+  saveData();
+  console.log(`✅ 상품 일괄 배정: ${assigned}개 → ${seller.companyName}`);
+  res.json({ ok: true, data: { assignedProducts: assigned }, message: `${assigned} products assigned to ${seller.companyName}` });
+});
+
+// 플랫폼 기본 수수료율 조회/수정
+app.get('/datepalm-bay/api/admin/settings/commission', (req, res) => {
+  res.json({ ok: true, data: platformSettings, message: 'Commission settings retrieved' });
+});
+
+app.put('/datepalm-bay/api/admin/settings/commission', (req, res) => {
+  const { defaultCommissionRate } = req.body.data || req.body;
+  const rate = parseFloat(defaultCommissionRate);
+  if (Number.isNaN(rate) || rate < 0 || rate > 100) {
+    return res.status(400).json({ ok: false, data: null, message: 'defaultCommissionRate must be a number between 0 and 100.' });
+  }
+  platformSettings.defaultCommissionRate = rate;
+  saveData();
+  res.json({ ok: true, data: platformSettings, message: 'Commission settings updated' });
+});
+
+// ========================================
+// 정산 (월별 정산서: 월말 마감 → 익월 15일 지급, USD 기준)
+// ========================================
+
+function round2(n) {
+  return Math.round(n * 100) / 100;
+}
+
+// "YYYY-MM" → 익월 15일 (YYYY-MM-DD)
+function getScheduledPayoutDate(period) {
+  const [y, m] = period.split('-').map(Number);
+  return new Date(Date.UTC(y, m, 15)).toISOString().slice(0, 10); // Date 월은 0-index라 m이 곧 익월
+}
+
+function getPeriodOf(dateStr) {
+  return dateStr ? String(dateStr).slice(0, 7) : null;
+}
+
+// 월별 정산서 생성 (기존 DRAFT는 재계산 덮어쓰기, CONFIRMED/PAID는 스킵)
+app.post('/datepalm-bay/api/admin/settlements/generate', (req, res) => {
+  console.log('\n=== [Settlement] 정산서 생성 ===');
+  const { period, sellerId } = req.body.data || req.body;
+
+  if (!period || !/^\d{4}-\d{2}$/.test(period)) {
+    return res.status(400).json({ ok: false, data: null, message: 'period must be in YYYY-MM format.' });
+  }
+
+  const targetSellers = sellerId ? sellers.filter(s => s.sellerId === sellerId) : sellers;
+  if (sellerId && targetSellers.length === 0) {
+    return res.status(404).json({ ok: false, data: null, message: 'Seller not found.' });
+  }
+  if (targetSellers.length === 0) {
+    return res.status(400).json({ ok: false, data: null, message: 'No sellers registered.' });
+  }
+
+  const paidStatuses = ['SUCCESS', 'DELIVERY', 'DELIVERED'];
+  const created = [];
+  const skipped = [];
+  let unassignedSalesUSD = 0; // sellerId 미배정 상품의 당월 매출 (플랫폼 귀속 참고치)
+
+  // 미배정 상품 매출 집계 (참고 보고용)
+  const unassignedCodes = new Set(products.filter(p => !p.sellerId).map(p => p.productCode));
+  customerOrders.forEach(order => {
+    const isPaidEver = paidStatuses.includes(order.status) || order.status === 'REFUNDED';
+    if (!isPaidEver || getPeriodOf(order.approvedAt || order.createdAt) !== period) return;
+    unassignedSalesUSD += orderLinesForSeller(order, unassignedCodes).reduce((s, l) => s + l.itemAmountUSD, 0);
+  });
+
+  targetSellers.forEach(seller => {
+    const settlementId = `SETL-${period.replace('-', '')}-${seller.sellerId}`;
+    const existing = settlements.find(st => st.settlementId === settlementId);
+    if (existing && existing.status !== 'DRAFT') {
+      skipped.push({ settlementId, status: existing.status });
+      return;
+    }
+
+    const sellerCodes = getSellerProductCodes(seller.sellerId);
+    const lines = [];
+    const saleOrderIds = new Set();
+    const refundOrderIds = new Set();
+
+    customerOrders.forEach(order => {
+      // SALE: 결제된 적 있는 주문(현재 환불됐어도 결제월 매출로 인정) && 결제월 일치
+      // → 6월 결제·7월 환불 주문이 6월 정산서에서 사라지지 않게 REFUNDED도 포함
+      const everPaid = paidStatuses.includes(order.status) || order.status === 'REFUNDED';
+      if (everPaid && getPeriodOf(order.approvedAt || order.createdAt) === period) {
+        orderLinesForSeller(order, sellerCodes).forEach(line => {
+          lines.push({ type: 'SALE', orderId: order.orderId, orderDate: order.approvedAt || order.createdAt, ...line });
+          saleOrderIds.add(order.orderId);
+        });
+      }
+      // REFUND: 환불월 일치 (전액 환불만 존재하므로 SALE와 동일 산식으로 차감)
+      if (order.status === 'REFUNDED' && getPeriodOf(order.refundedAt || order.createdAt) === period) {
+        orderLinesForSeller(order, sellerCodes).forEach(line => {
+          lines.push({ type: 'REFUND', orderId: order.orderId, orderDate: order.refundedAt || order.createdAt, ...line });
+          refundOrderIds.add(order.orderId);
+        });
+      }
+    });
+
+    const grossSalesUSD = round2(lines.filter(l => l.type === 'SALE').reduce((s, l) => s + l.itemAmountUSD, 0));
+    const refundsUSD = round2(lines.filter(l => l.type === 'REFUND').reduce((s, l) => s + l.itemAmountUSD, 0));
+    const netSalesUSD = round2(grossSalesUSD - refundsUSD);
+    const commissionRate = getEffectiveCommissionRate(seller); // 생성 시점 스냅샷 — 이후 요율 변경에 불변
+    const commissionUSD = round2(netSalesUSD * commissionRate / 100);
+    const payoutUSD = round2(netSalesUSD - commissionUSD); // 음수 허용 = 익월 이월
+
+    const [y, m] = period.split('-').map(Number);
+    const settlement = {
+      settlementId,
+      sellerId: seller.sellerId,
+      sellerCompanyName: seller.companyName,
+      period,
+      periodStart: new Date(Date.UTC(y, m - 1, 1)).toISOString(),
+      periodEnd: new Date(Date.UTC(y, m, 0, 23, 59, 59)).toISOString(),
+      currency: 'USD',
+      grossSalesUSD,
+      refundsUSD,
+      netSalesUSD,
+      commissionRate,
+      commissionUSD,
+      payoutUSD,
+      orderCount: saleOrderIds.size,
+      refundCount: refundOrderIds.size,
+      lines,
+      status: 'DRAFT',
+      scheduledPayoutDate: getScheduledPayoutDate(period),
+      generatedAt: new Date().toISOString(),
+      confirmedAt: null,
+      paidAt: null,
+      memo: '',
+    };
+
+    const existingIndex = settlements.findIndex(st => st.settlementId === settlementId);
+    if (existingIndex !== -1) {
+      settlements[existingIndex] = settlement;
+    } else {
+      settlements.push(settlement);
+    }
+    created.push({ settlementId, sellerCompanyName: seller.companyName, grossSalesUSD, refundsUSD, commissionUSD, payoutUSD });
+  });
+
+  saveData();
+  console.log(`✅ 정산서 생성: ${created.length}건, 스킵 ${skipped.length}건 (기간: ${period})`);
+
+  res.json({
+    ok: true,
+    data: { created, skipped, unassignedSalesUSD: round2(unassignedSalesUSD) },
+    message: `${created.length} settlement(s) generated, ${skipped.length} skipped`,
+  });
+});
+
+// 정산서 목록 (운영자)
+app.get('/datepalm-bay/api/admin/settlements', (req, res) => {
+  const { period, sellerId, status } = req.query;
+  let list = [...settlements];
+  if (period) list = list.filter(st => st.period === period);
+  if (sellerId) list = list.filter(st => st.sellerId === sellerId);
+  if (status) list = list.filter(st => st.status === status);
+
+  list.sort((a, b) => b.period.localeCompare(a.period) || a.sellerCompanyName.localeCompare(b.sellerCompanyName));
+
+  // 목록은 lines 제외 요약만
+  const summary = list.map(({ lines, ...rest }) => rest);
+  res.json({ ok: true, data: summary, message: 'Settlements retrieved' });
+});
+
+// 정산서 상세 (운영자)
+app.get('/datepalm-bay/api/admin/settlements/:settlementId', (req, res) => {
+  const settlement = settlements.find(st => st.settlementId === req.params.settlementId);
+  if (!settlement) return res.status(404).json({ ok: false, data: null, message: 'Settlement not found.' });
+  res.json({ ok: true, data: settlement, message: 'Settlement retrieved' });
+});
+
+// 정산서 확정 (DRAFT → CONFIRMED)
+app.put('/datepalm-bay/api/admin/settlements/:settlementId/confirm', (req, res) => {
+  const settlement = settlements.find(st => st.settlementId === req.params.settlementId);
+  if (!settlement) return res.status(404).json({ ok: false, data: null, message: 'Settlement not found.' });
+  if (settlement.status !== 'DRAFT') {
+    return res.status(400).json({ ok: false, data: null, message: `Cannot confirm a settlement in ${settlement.status} status.` });
+  }
+  settlement.status = 'CONFIRMED';
+  settlement.confirmedAt = new Date().toISOString();
+  saveData();
+  res.json({ ok: true, data: settlement, message: 'Settlement confirmed' });
+});
+
+// 정산서 지급완료 처리 (CONFIRMED → PAID)
+app.put('/datepalm-bay/api/admin/settlements/:settlementId/pay', (req, res) => {
+  const settlement = settlements.find(st => st.settlementId === req.params.settlementId);
+  if (!settlement) return res.status(404).json({ ok: false, data: null, message: 'Settlement not found.' });
+  if (settlement.status !== 'CONFIRMED') {
+    return res.status(400).json({ ok: false, data: null, message: `Cannot mark as paid a settlement in ${settlement.status} status.` });
+  }
+  const { memo } = req.body.data || req.body || {};
+  settlement.status = 'PAID';
+  settlement.paidAt = new Date().toISOString();
+  if (memo) settlement.memo = memo;
+  saveData();
+  res.json({ ok: true, data: settlement, message: 'Settlement marked as paid' });
+});
+
+// 셀러 - 내 정산서 목록
+app.get('/datepalm-bay/api/seller/settlements', (req, res) => {
+  const scope = getSellerScope(req);
+  if (!scope) return res.status(401).json({ ok: false, data: null, message: 'Seller authentication required.' });
+
+  const list = settlements
+    .filter(st => st.sellerId === scope.sellerId)
+    .sort((a, b) => b.period.localeCompare(a.period))
+    .map(({ lines, ...rest }) => rest);
+
+  res.json({ ok: true, data: list, message: 'Settlements retrieved' });
+});
+
+// 셀러 - 내 정산서 상세 (주문별 내역 포함)
+app.get('/datepalm-bay/api/seller/settlements/:settlementId', (req, res) => {
+  const scope = getSellerScope(req);
+  if (!scope) return res.status(401).json({ ok: false, data: null, message: 'Seller authentication required.' });
+
+  const settlement = settlements.find(st => st.settlementId === req.params.settlementId);
+  if (!settlement) return res.status(404).json({ ok: false, data: null, message: 'Settlement not found.' });
+  if (settlement.sellerId !== scope.sellerId) {
+    return res.status(403).json({ ok: false, data: null, message: 'You do not have access to this settlement.' });
+  }
+
+  res.json({ ok: true, data: settlement, message: 'Settlement retrieved' });
 });
 
 // ========================================
@@ -5522,6 +6113,7 @@ app.post('/datepalm-bay/api/mvp/payment/refund', async (req, res) => {
     });
 
     order.status = 'REFUNDED';
+    order.refundedAt = new Date().toISOString(); // 정산 시 환불월 판정 기준
     saveData();
 
     console.log(`✅ 환불 완료: ${paymentCode}`);
@@ -7034,8 +7626,21 @@ app.get('/datepalm-bay/api/admin/dashboard/stats', (req, res) => {
   const thisMonth = now.getMonth();
   const thisYear = now.getFullYear();
 
+  // 셀러 세션이면 자기 상품 포함 주문만으로 동일 집계 —
+  // 금액(amount)도 자기 상품 라인 합계(USD)로 치환해 타 셀러/배송비 금액이 매출에 섞이지 않게 함
+  const scope = getSellerScope(req);
+  const sellerCodes = scope ? getSellerProductCodes(scope.sellerId) : null;
+  const scopedOrders = sellerCodes
+    ? customerOrders
+        .filter(o => orderBelongsToSeller(o, sellerCodes))
+        .map(o => ({
+          ...maskOrderForSeller(o, sellerCodes),
+          amount: orderLinesForSeller(o, sellerCodes).reduce((s, l) => s + l.itemAmountUSD, 0),
+        }))
+    : customerOrders;
+
   const paidStatuses = ['SUCCESS', 'DELIVERY', 'DELIVERED'];
-  const paidOrders = customerOrders.filter(o => paidStatuses.includes(o.status));
+  const paidOrders = scopedOrders.filter(o => paidStatuses.includes(o.status));
 
   const thisMonthOrders = paidOrders.filter(o => {
     const d = new Date(o.createdAt);
@@ -7062,10 +7667,10 @@ app.get('/datepalm-bay/api/admin/dashboard/stats', (req, res) => {
 
   const ordersByStatus = {};
   ['PENDING', 'SUCCESS', 'DELIVERY', 'DELIVERED', 'REFUNDED'].forEach(s => {
-    ordersByStatus[s] = customerOrders.filter(o => o.status === s).length;
+    ordersByStatus[s] = scopedOrders.filter(o => o.status === s).length;
   });
 
-  const recentOrders = [...customerOrders]
+  const recentOrders = [...scopedOrders]
     .sort((a, b) => new Date(b.createdAt) - new Date(a.createdAt))
     .slice(0, 5)
     .map(o => ({
@@ -7106,7 +7711,7 @@ app.get('/datepalm-bay/api/admin/dashboard/stats', (req, res) => {
     });
   }
 
-  const totalOrders = customerOrders.length;
+  const totalOrders = scopedOrders.length;
   const avgOrderValue = paidOrders.length > 0 ? Math.round((totalRevenue / paidOrders.length) * 100) / 100 : 0;
 
   console.log(`Dashboard: Revenue=$${monthlyRevenue.toFixed(2)}, Orders=${totalOrders}, Members=${totalMembers}`);
@@ -7293,6 +7898,9 @@ async function startServer() {
   if (loadedData.snsReviewOverrides) snsReviewOverrides = loadedData.snsReviewOverrides;
   if (loadedData.productInsights) productInsights = loadedData.productInsights;
   if (loadedData.aiFeedbackHistory) aiFeedbackHistory = loadedData.aiFeedbackHistory;
+  if (loadedData.sellers) sellers = loadedData.sellers;
+  if (loadedData.settlements) settlements = loadedData.settlements;
+  if (loadedData.platformSettings) platformSettings = loadedData.platformSettings;
 
   // 4. 더미/테스트 주문 데이터 정리
   const testOrderIds = ['ORDER-TEST-FEDEX-001', 'ORDER-TEST-002', 'ORDER-TEST-FEDEX-003'];
