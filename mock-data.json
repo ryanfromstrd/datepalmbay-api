@@ -4377,6 +4377,29 @@
       "applicableCategories": [],
       "applicableProductCodes": [],
       "stackable": false
+    },
+    {
+      "code": "CPN-REFERRAL5",
+      "name": "Referral Reward",
+      "description": "Thanks for referring a friend to DatepalmBay!",
+      "discountType": "FIXED",
+      "discountValue": 5,
+      "minOrderAmount": 0,
+      "maxDiscountAmount": null,
+      "startDate": "2024-01-01T00:00:00Z",
+      "endDate": "2099-12-31T23:59:59Z",
+      "status": "ACTIVE",
+      "usageCount": 0,
+      "usageLimit": null,
+      "createdAt": "2026-07-20T07:48:36.768Z",
+      "updatedAt": "2026-07-20T07:48:36.768Z",
+      "couponType": "GENERAL",
+      "isDownloadable": false,
+      "isAutoIssue": false,
+      "targetCondition": {},
+      "applicableCategories": [],
+      "applicableProductCodes": [],
+      "stackable": true
     }
   ],
   "groupBuyTeams": [],
@@ -4435,5 +4458,35 @@
   "productInsights": [],
   "aiFeedbackHistory": [],
   "b2bUsers": [],
-  "savedAt": "2026-07-13T07:36:58.139Z"
+  "sellers": [
+    {
+      "sellerId": "SELLER-1784082738637",
+      "loginId": "meebak",
+      "password": "meebak123",
+      "companyName": "Meebak Cosmetics",
+      "brandNames": [
+        "Meebak"
+      ],
+      "businessRegNo": "",
+      "contactName": "",
+      "contactEmail": "seller@meebak.com",
+      "contactPhone": "",
+      "payout": {
+        "bankName": "KB",
+        "accountHolder": "Meebak",
+        "accountNumber": "123-456",
+        "swiftCode": ""
+      },
+      "commissionRateOverride": null,
+      "status": "ACTIVE",
+      "createdAt": "2026-07-15T02:32:18.638Z",
+      "updatedAt": "2026-07-15T02:32:18.638Z"
+    }
+  ],
+  "settlements": [],
+  "platformSettings": {
+    "defaultCommissionRate": 13.5
+  },
+  "reviews": [],
+  "savedAt": "2026-07-20T07:48:37.288Z"
 }

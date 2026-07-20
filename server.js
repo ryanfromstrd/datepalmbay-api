@@ -3514,6 +3514,11 @@ app.get('/datepalm-bay/api/mvp/member/detail/me', (req, res) => {
       country: user.country || '',
       currency: currencyService.getMemberCurrency(user.country || ''),
       defaultShippingAddress: user.defaultShippingAddress || null,
+      points: user.points || 0,
+      memberLevel: user.memberLevel || 'BRONZE',
+      totalPurchaseAmount: user.totalPurchaseAmount || 0,
+      totalPurchaseCount: user.totalPurchaseCount || 0,
+      referralCode: user.code,
     },
     message: 'User profile retrieved successfully'
   });
@@ -3848,6 +3853,63 @@ app.post('/datepalm-bay/api/mvp/member/check-email', (req, res) => {
 // Member Create (Sign Up)
 // ======================================
 // 신규 회원에게 자동 발급 쿠폰(Welcome Coupon 등) 지급
+// 친구 추천 리워드용 공용 쿠폰 — 최초 사용 시 1회만 생성(멱등)
+const REFERRAL_COUPON_CODE = 'CPN-REFERRAL5';
+function ensureReferralCoupon() {
+  if (coupons.find(c => c.code === REFERRAL_COUPON_CODE)) return;
+  coupons.push({
+    code: REFERRAL_COUPON_CODE,
+    name: 'Referral Reward',
+    description: 'Thanks for referring a friend to DatepalmBay!',
+    discountType: 'FIXED',
+    discountValue: 5,
+    minOrderAmount: 0,
+    maxDiscountAmount: null,
+    startDate: '2024-01-01T00:00:00Z',
+    endDate: '2099-12-31T23:59:59Z',
+    status: 'ACTIVE',
+    usageCount: 0,
+    usageLimit: null,
+    createdAt: new Date().toISOString(),
+    updatedAt: new Date().toISOString(),
+    couponType: 'GENERAL',
+    isDownloadable: false,
+    isAutoIssue: false,
+    targetCondition: {},
+    applicableCategories: [],
+    applicableProductCodes: [],
+    stackable: true,
+  });
+}
+
+function grantCoupon(userCode, couponCode) {
+  const alreadyIssued = userCoupons.some(uc => uc.userId === userCode && uc.couponCode === couponCode);
+  if (alreadyIssued) return;
+  userCoupons.push({
+    id: `UC-${Date.now()}-${Math.round(Math.random() * 1e6)}`,
+    userId: userCode,
+    couponCode,
+    downloadedAt: new Date().toISOString(),
+    usedAt: null,
+    usedOrderCode: null,
+  });
+}
+
+// 추천인의 친구가 첫 구매를 완료하면 양쪽에 $5 쿠폰 지급 (가입 시점이 아닌 결제 성공 시점에 지급 — 가짜 가입 어뷰징 방지)
+function grantReferralRewardIfEligible(purchasingUser) {
+  if (!purchasingUser.referredBy || purchasingUser.referralRewarded) return;
+
+  const referrer = users.find(u => u.code === purchasingUser.referredBy);
+  if (!referrer) return;
+
+  ensureReferralCoupon();
+  grantCoupon(purchasingUser.code, REFERRAL_COUPON_CODE);
+  grantCoupon(referrer.code, REFERRAL_COUPON_CODE);
+  purchasingUser.referralRewarded = true;
+
+  console.log(`🤝 추천 리워드 지급: ${referrer.code} ↔ ${purchasingUser.code}`);
+}
+
 function autoIssueWelcomeCoupons(user) {
   const now = new Date();
   coupons.forEach(coupon => {
@@ -3875,11 +3937,14 @@ function autoIssueWelcomeCoupons(user) {
 
 app.post('/datepalm-bay/api/mvp/member/create', (req, res) => {
   console.log('\n=== [Member] Create New Member ===');
-  const { id, password, name, email, phone, birthdate, country } = req.body;
+  const { id, password, name, email, phone, birthdate, country, referralCode } = req.body;
 
   if (!id || !password || !name || !email) {
     return res.json({ ok: false, data: null, message: 'Required fields missing' });
   }
+
+  // 추천인 코드는 추천인의 회원 code 값 그대로 사용 — 잘못된 코드는 조용히 무시(가입 자체는 막지 않음)
+  const referrer = referralCode ? users.find(u => u.code === referralCode) : null;
 
   // Google OAuth 유저가 이메일로 재가입하는 경우 → 기존 유저 업데이트
   const existingGoogleUser = users.find(u => u.email === email && !u.password);
@@ -3915,6 +3980,9 @@ app.post('/datepalm-bay/api/mvp/member/create', (req, res) => {
     lastPurchaseDate: null,
     totalPurchaseCount: 0,
     totalPurchaseAmount: 0,
+    points: 0,
+    referredBy: referrer ? referrer.code : null,
+    referralRewarded: false,
   };
 
   users.push(newUser);
@@ -5904,11 +5972,18 @@ app.post('/datepalm-bay/api/mvp/order/create', async (req, res) => {
     shippingCost,
     couponCode,
     couponDiscount,
-    selectedOptions
+    selectedOptions,
+    pointsToUse,
   } = orderData;
 
   // 주문 ID 생성
   const orderId = `ORDER-${Date.now()}-${Math.random().toString(36).substring(2, 8).toUpperCase()}`;
+
+  // 주문자 계정 조회 (통화 결정 + 포인트 사용 검증에 공용으로 사용)
+  const authHeader = req.headers.authorization;
+  const authToken = authHeader ? authHeader.replace('Bearer ', '') : null;
+  const orderingUserId = authToken ? extractUserIdFromToken(authToken) : null;
+  const orderingUser = orderingUserId ? users.find(u => u.id === orderingUserId || u.code === orderingUserId) : null;
 
   let amount;
   let orderName;
@@ -5964,6 +6039,16 @@ app.post('/datepalm-bay/api/mvp/order/create', async (req, res) => {
       : product.productName;
   }
 
+  // 포인트 사용 (100P = $1) — 보유 포인트, 요청 포인트, 남은 주문금액 중 가장 작은 값만큼만 차감
+  // 실제 차감은 결제 성공 시점(capture-order)에 이루어지며, 여기서는 금액 계산에만 반영한다.
+  let pointsUsed = 0;
+  if (pointsToUse && pointsToUse > 0 && orderingUser) {
+    const availablePoints = orderingUser.points || 0;
+    const maxPointsByAmount = Math.floor(amount * 100);
+    pointsUsed = Math.max(0, Math.min(Math.floor(pointsToUse), availablePoints, maxPointsByAmount));
+    amount -= pointsUsed / 100;
+  }
+
   // 금액이 0 이하가 되지 않도록
   amount = Math.max(0, amount);
 
@@ -5973,10 +6058,6 @@ app.post('/datepalm-bay/api/mvp/order/create', async (req, res) => {
   let finalCurrency = 'USD';
   let fxRate = 1;
   try {
-    const authHeader = req.headers.authorization;
-    const token = authHeader ? authHeader.replace('Bearer ', '') : null;
-    const userId = token ? extractUserIdFromToken(token) : null;
-    const orderingUser = userId ? users.find(u => u.id === userId || u.code === userId) : null;
     const memberCurrency = orderingUser ? currencyService.getMemberCurrency(orderingUser.country || '') : 'USD';
     if (memberCurrency !== 'USD') {
       const converted = await currencyService.convertFromUSD(amountUSD, memberCurrency);
@@ -6014,6 +6095,8 @@ app.post('/datepalm-bay/api/mvp/order/create', async (req, res) => {
     bundleItems: isBundleOrder ? bundleItems : null,
     couponCode: couponCode || null,
     couponDiscount: couponDiscount || 0,
+    pointsUsed,
+    pointsUsedBy: pointsUsed > 0 ? (orderingUser.code || orderingUser.id) : null,
     selectedOptions: selectedOptions || [],
     shippingCost: shippingCost || 0,
     status: 'PENDING',
@@ -6132,6 +6215,23 @@ app.post('/datepalm-bay/api/mvp/paypal/create-order', async (req, res) => {
 });
 
 // PayPal 결제 승인(Capture) API
+// 로열티 등급 산정 — 누적 구매액(USD) 기준. 프로필 완성 시 기본 BRONZE가 부여되므로
+// 구매 실적에 따른 재계산은 절대 그 아래로 강등하지 않는다(항상 현재 등급과 계산값 중 높은 쪽 유지).
+const MEMBER_LEVEL_RANK = { BASIC: 0, BRONZE: 1, SILVER: 2, GOLD: 3, VIP: 4 };
+const MEMBER_LEVEL_THRESHOLDS = [
+  { level: 'VIP', minAmount: 1500 },
+  { level: 'GOLD', minAmount: 500 },
+  { level: 'SILVER', minAmount: 200 },
+  { level: 'BRONZE', minAmount: 0 },
+];
+
+function calculateMemberLevel(totalPurchaseAmount, currentLevel) {
+  const computed = MEMBER_LEVEL_THRESHOLDS.find(t => totalPurchaseAmount >= t.minAmount)?.level || 'BRONZE';
+  const currentRank = MEMBER_LEVEL_RANK[currentLevel] ?? 0;
+  const computedRank = MEMBER_LEVEL_RANK[computed];
+  return computedRank > currentRank ? computed : currentLevel;
+}
+
 app.post('/datepalm-bay/api/mvp/paypal/capture-order', async (req, res) => {
   console.log('\n=== [PayPal] 결제 승인 ===');
   const { paypalOrderId } = req.body.data || req.body;
@@ -6157,6 +6257,34 @@ app.post('/datepalm-bay/api/mvp/paypal/capture-order', async (req, res) => {
     order.paymentMethod = 'PAYPAL';
     order.captureId = captureResult.purchase_units?.[0]?.payments?.captures?.[0]?.id;
     order.approvedAt = new Date().toISOString();
+
+    // 로열티: 결제 성공 시점에만 포인트 사용을 실제 차감하고 적립 포인트를 지급 —
+    // 주문 생성만으로는 미확정 상태라 여기서 처리해야 결제 취소/실패 시 포인트가 잘못 소모되지 않는다.
+    const purchasingUser = order.pointsUsedBy
+      ? users.find(u => u.code === order.pointsUsedBy || u.id === order.pointsUsedBy)
+      : users.find(u => (u.email || '').toLowerCase() === (order.ordererEmail || '').toLowerCase());
+
+    if (purchasingUser) {
+      const isFirstPurchase = (purchasingUser.totalPurchaseCount || 0) === 0;
+
+      if (order.pointsUsed > 0) {
+        purchasingUser.points = Math.max(0, (purchasingUser.points || 0) - order.pointsUsed);
+      }
+      const earnedPoints = Math.floor(order.amountUSD || 0); // $1 = 1P
+      purchasingUser.points = (purchasingUser.points || 0) + earnedPoints;
+      purchasingUser.totalPurchaseAmount = (purchasingUser.totalPurchaseAmount || 0) + (order.amountUSD || 0);
+      purchasingUser.totalPurchaseCount = (purchasingUser.totalPurchaseCount || 0) + 1;
+      purchasingUser.lastPurchaseDate = order.approvedAt;
+      purchasingUser.memberLevel = calculateMemberLevel(purchasingUser.totalPurchaseAmount, purchasingUser.memberLevel);
+      order.pointsEarned = earnedPoints;
+      console.log(`🏅 로열티 갱신: ${purchasingUser.id} → ${purchasingUser.memberLevel}, 포인트 ${purchasingUser.points}P (+${earnedPoints}P, -${order.pointsUsed || 0}P)`);
+
+      // 친구 추천 리워드: 피추천인의 첫 구매 완료 시점에 지급
+      if (isFirstPurchase) {
+        grantReferralRewardIfEligible(purchasingUser);
+      }
+    }
+
     saveData();
 
     console.log(`✅ PayPal 결제 완료: ${order.orderId}`);
