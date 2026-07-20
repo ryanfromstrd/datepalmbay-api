@@ -84,7 +84,7 @@ async function waitForMySQL(maxRetries = 5) {
 // 데이터 로드 함수 (MySQL → JSON 파일 → 빈 저장소)
 // ========================================
 async function loadData() {
-  const emptyData = { products: [], snsReviews: [], brands: [], orders: null, members: null, users: null, userCoupons: null, coupons: null, groupBuyTeams: [], events: null, snsReviewOverrides: [], productInsights: [], aiFeedbackHistory: [], sellers: [], settlements: [], platformSettings: null };
+  const emptyData = { products: [], snsReviews: [], brands: [], orders: null, members: null, users: null, userCoupons: null, coupons: null, groupBuyTeams: [], events: null, snsReviewOverrides: [], productInsights: [], aiFeedbackHistory: [], sellers: [], settlements: [], platformSettings: null, reviews: [] };
 
   // 1단계: MySQL에서 로드 시도
   if (_useMySQL) {
@@ -111,6 +111,7 @@ async function loadData() {
           sellers: mysqlData.sellers || [],
           settlements: mysqlData.settlements || [],
           platformSettings: mysqlData.platformSettings || null,
+          reviews: mysqlData.reviews || [],
         };
       }
       console.log('🗄️  MySQL 비어있음, JSON 파일 확인...');
@@ -167,6 +168,7 @@ async function loadData() {
         sellers: data.sellers || [],
         settlements: data.settlements || [],
         platformSettings: data.platformSettings || null,
+        reviews: data.reviews || [],
       };
     } catch (e) {
       console.error('❌ JSON 데이터 로드 실패:', e.message);
@@ -208,6 +210,7 @@ async function _saveDataImpl() {
     sellers: sellers,
     settlements: settlements,
     platformSettings: platformSettings,
+    reviews: reviews,
   };
 
   if (_useMySQL) {
@@ -2641,7 +2644,11 @@ app.get('/datepalm-bay/api/mvp/product/normal/list', (req, res) => {
       summary: t?.introduction || p.introduction,
       price: p.productPrice,
       thumbnailUrl: p.files?.mainImages?.[0]?.url || '',  // 첫 번째 main image 사용
-      brand: p.brand || ''
+      brand: p.brand || '',
+      // 배송비 관련 필드 (상세 API와 동일 기준 — 누락 시 장바구니/카드에서 항상 무료배송으로 오인됨)
+      shippingCostType: p.shippingCostType || p.policy?.shippingCostType || 'FREE',
+      shippingCost: p.shippingCost ?? p.policy?.shippingCost ?? 0,
+      freeShippingThreshold: p.freeShippingThreshold ?? p.policy?.freeShippingThreshold ?? 0,
     };
   });
 
@@ -2667,6 +2674,24 @@ app.get('/datepalm-bay/api/mvp/product/normal/list', (req, res) => {
     message: '상품 목록 조회 성공'
   });
 });
+
+// 리뷰 작성 자격에 사용되는 결제완료 상태값 (정산 로직과 동일 기준)
+const REVIEW_ELIGIBLE_ORDER_STATUSES = ['SUCCESS', 'DELIVERY', 'DELIVERED'];
+
+// 로그인 유저가 해당 상품을 구매(결제완료)한 이력이 있는지 확인 — 리뷰 작성 자격 검증
+// 주문에는 회원 ID가 저장되지 않으므로(주문자 정보만 저장) 이메일로 매칭한다.
+function userHasPurchasedProduct(userEmail, productCode) {
+  if (!userEmail) return false;
+  const email = userEmail.toLowerCase();
+  return customerOrders.some(order => {
+    if (!REVIEW_ELIGIBLE_ORDER_STATUSES.includes(order.status)) return false;
+    if ((order.ordererEmail || '').toLowerCase() !== email) return false;
+    if (Array.isArray(order.bundleItems) && order.bundleItems.length > 0) {
+      return order.bundleItems.some(i => i.productCode === productCode);
+    }
+    return String(order.productCode || '').split(',').map(c => c.trim()).includes(productCode);
+  });
+}
 
 // 프론트 - 상품 상세 조회
 app.get('/datepalm-bay/api/mvp/product/normal/detail/:code', (req, res) => {
@@ -2731,7 +2756,13 @@ app.get('/datepalm-bay/api/mvp/product/normal/detail/:code', (req, res) => {
     deliveryPolicy: t?.deliveryPolicy || product.policy?.deliveryPolicy || '',
     refundPolicy: t?.refundPolicy || product.policy?.refundPolicy || '',
     exchangePolicy: t?.exchangePolicy || product.policy?.exchangePolicy || '',
-    canReviewWrite: false,
+    canReviewWrite: (() => {
+      const authHeader = req.headers.authorization;
+      const token = authHeader ? authHeader.replace('Bearer ', '') : null;
+      const userId = token ? extractUserIdFromToken(token) : null;
+      const user = userId ? users.find(u => u.id === userId || u.code === userId) : null;
+      return user ? userHasPurchasedProduct(user.email, product.productCode) : false;
+    })(),
     groupBuyTiers: product.groupBuyTiers || [],
     productOptions: product.productOptions || [],
     // 배송비 관련 필드 (상위 레벨 또는 policy 객체에서 가져옴)
@@ -2748,6 +2779,120 @@ app.get('/datepalm-bay/api/mvp/product/normal/detail/:code', (req, res) => {
     data: detailResponse,
     message: '상품 상세 조회 성공'
   });
+});
+
+// ======================================
+// 상품 리뷰 (별점 + 사진)
+// ======================================
+
+function buildReviewSummary(productReviews) {
+  const distribution = { '1': 0, '2': 0, '3': 0, '4': 0, '5': 0 };
+  productReviews.forEach(r => {
+    const key = String(Math.min(5, Math.max(1, Math.round(r.rating || 0))));
+    distribution[key] = (distribution[key] || 0) + 1;
+  });
+  const totalCount = productReviews.length;
+  const avgRating = totalCount > 0
+    ? Math.round((productReviews.reduce((sum, r) => sum + (r.rating || 0), 0) / totalCount) * 10) / 10
+    : 0;
+  return { avgRating, totalCount, distribution };
+}
+
+// 리뷰 목록 조회 (별점 분포 요약 포함)
+app.get('/datepalm-bay/api/mvp/review/list', (req, res) => {
+  const { productCode } = req.query;
+  if (!productCode) {
+    return res.status(400).json({ ok: false, data: null, message: 'productCode is required.' });
+  }
+
+  const productReviews = reviews
+    .filter(r => r.productCode === productCode)
+    .sort((a, b) => new Date(b.createDate) - new Date(a.createDate));
+
+  res.json({
+    ok: true,
+    data: {
+      reviews: productReviews.map(r => ({
+        content: r.content,
+        memberId: r.memberId,
+        rating: r.rating,
+        createDate: r.createDate,
+        images: r.images,
+      })),
+      summary: buildReviewSummary(productReviews),
+    },
+    message: 'Reviews retrieved successfully',
+  });
+});
+
+// 리뷰 작성 (multipart: request(JSON) + files(이미지)) — 구매 이력이 있는 로그인 유저만 가능
+app.post('/datepalm-bay/api/mvp/review/create', upload.fields([
+  { name: 'files', maxCount: 10 },
+  { name: 'request', maxCount: 1 },
+]), (req, res) => {
+  console.log('\n=== [Review] 리뷰 작성 ===');
+
+  const authHeader = req.headers.authorization;
+  const token = authHeader ? authHeader.replace('Bearer ', '') : null;
+  const userId = token ? extractUserIdFromToken(token) : null;
+  if (!userId) {
+    return res.status(401).json({ ok: false, data: null, message: 'Authorization token required.' });
+  }
+  const user = users.find(u => u.id === userId || u.code === userId);
+  if (!user) {
+    return res.status(404).json({ ok: false, data: null, message: 'User not found.' });
+  }
+
+  let requestData = {};
+  try {
+    if (req.files?.request?.[0]) {
+      const requestFilePath = req.files.request[0].path;
+      requestData = JSON.parse(fs.readFileSync(requestFilePath, 'utf-8'));
+      fs.unlinkSync(requestFilePath);
+    } else {
+      requestData = req.body;
+    }
+  } catch (e) {
+    return res.status(400).json({ ok: false, data: null, message: 'Invalid request payload.' });
+  }
+
+  const { productCode, content, rating } = requestData;
+  const ratingNum = Number(rating);
+
+  if (!productCode || !content || !content.trim()) {
+    return res.status(400).json({ ok: false, data: null, message: 'productCode and content are required.' });
+  }
+  if (!Number.isInteger(ratingNum) || ratingNum < 1 || ratingNum > 5) {
+    return res.status(400).json({ ok: false, data: null, message: 'rating must be an integer between 1 and 5.' });
+  }
+  if (!userHasPurchasedProduct(user.email, productCode)) {
+    return res.status(403).json({ ok: false, data: null, message: 'Only customers who purchased this product can write a review.' });
+  }
+
+  const baseUrl = getBaseUrl(req);
+  const reviewId = `REVIEW-${Date.now()}`;
+  const imageFiles = req.files?.files || [];
+  const images = imageFiles.map((file, index) => ({
+    code: `${reviewId}-I${index + 1}`,
+    name: file.originalname,
+    url: `${baseUrl}/uploads/${file.filename}`,
+  }));
+
+  const newReview = {
+    reviewId,
+    productCode,
+    memberId: user.code || user.id,
+    rating: ratingNum,
+    content: content.trim(),
+    images,
+    createDate: new Date().toISOString(),
+  };
+
+  reviews.push(newReview);
+  saveData();
+
+  console.log(`✅ 리뷰 작성 완료: ${reviewId} (${productCode}, ★${ratingNum})`);
+  res.json({ ok: true, data: reviewId, message: 'Review created successfully' });
 });
 
 // ======================================
@@ -4250,7 +4395,11 @@ app.get('/datepalm-bay/api/mvp/product/new/list', (req, res) => {
     discountType: p.discountType,
     summary: p.introduction,
     price: p.productPrice,
-    thumbnailUrl: p.files?.mainImages?.[0]?.url || ''
+    thumbnailUrl: p.files?.mainImages?.[0]?.url || '',
+    brand: p.brand || '',
+    shippingCostType: p.shippingCostType || p.policy?.shippingCostType || 'FREE',
+    shippingCost: p.shippingCost ?? p.policy?.shippingCost ?? 0,
+    freeShippingThreshold: p.freeShippingThreshold ?? p.policy?.freeShippingThreshold ?? 0,
   }));
 
   console.log(`Page: ${pageNo}, Size: ${pageSize}`);
@@ -4327,7 +4476,11 @@ app.get('/datepalm-bay/api/mvp/product/bestseller/list', (req, res) => {
     price: p.productPrice,
     thumbnailUrl: p.files?.mainImages?.[0]?.url || '',
     salesCount: p.salesCount,
-    rank: p.rank
+    rank: p.rank,
+    brand: p.brand || '',
+    shippingCostType: p.shippingCostType || p.policy?.shippingCostType || 'FREE',
+    shippingCost: p.shippingCost ?? p.policy?.shippingCost ?? 0,
+    freeShippingThreshold: p.freeShippingThreshold ?? p.policy?.freeShippingThreshold ?? 0,
   }));
 
   console.log(`Page: ${pageNo}, Size: ${pageSize}`);
@@ -5717,6 +5870,9 @@ function extractYouTubeVideoId(url) {
 
 // 주문 목록 저장소 (startServer()에서 MySQL/JSON으로부터 로드)
 let customerOrders = [];
+
+// 상품 리뷰 저장소 (별점+사진, startServer()에서 MySQL/JSON으로부터 로드)
+let reviews = [];
 
 // 주문 생성 API (주문 정보만 저장, PayPal 결제는 별도)
 app.post('/datepalm-bay/api/mvp/order/create', async (req, res) => {
@@ -7901,6 +8057,7 @@ async function startServer() {
   if (loadedData.sellers) sellers = loadedData.sellers;
   if (loadedData.settlements) settlements = loadedData.settlements;
   if (loadedData.platformSettings) platformSettings = loadedData.platformSettings;
+  if (loadedData.reviews) reviews = loadedData.reviews;
 
   // 4. 더미/테스트 주문 데이터 정리
   const testOrderIds = ['ORDER-TEST-FEDEX-001', 'ORDER-TEST-002', 'ORDER-TEST-FEDEX-003'];
