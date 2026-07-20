@@ -84,7 +84,7 @@ async function waitForMySQL(maxRetries = 5) {
 // 데이터 로드 함수 (MySQL → JSON 파일 → 빈 저장소)
 // ========================================
 async function loadData() {
-  const emptyData = { products: [], snsReviews: [], brands: [], orders: null, members: null, users: null, userCoupons: null, coupons: null, groupBuyTeams: [], events: null, snsReviewOverrides: [], productInsights: [], aiFeedbackHistory: [], sellers: [], settlements: [], platformSettings: null, reviews: [] };
+  const emptyData = { products: [], snsReviews: [], brands: [], orders: null, members: null, users: null, userCoupons: null, coupons: null, groupBuyTeams: [], events: null, snsReviewOverrides: [], productInsights: [], aiFeedbackHistory: [], sellers: [], settlements: [], platformSettings: null, reviews: [], blogPosts: [] };
 
   // 1단계: MySQL에서 로드 시도
   if (_useMySQL) {
@@ -112,6 +112,7 @@ async function loadData() {
           settlements: mysqlData.settlements || [],
           platformSettings: mysqlData.platformSettings || null,
           reviews: mysqlData.reviews || [],
+          blogPosts: mysqlData.blogPosts || [],
         };
       }
       console.log('🗄️  MySQL 비어있음, JSON 파일 확인...');
@@ -169,6 +170,7 @@ async function loadData() {
         settlements: data.settlements || [],
         platformSettings: data.platformSettings || null,
         reviews: data.reviews || [],
+        blogPosts: data.blogPosts || [],
       };
     } catch (e) {
       console.error('❌ JSON 데이터 로드 실패:', e.message);
@@ -211,6 +213,7 @@ async function _saveDataImpl() {
     settlements: settlements,
     platformSettings: platformSettings,
     reviews: reviews,
+    blogPosts: blogPosts,
   };
 
   if (_useMySQL) {
@@ -4972,6 +4975,273 @@ app.delete('/datepalm-bay/api/admin/event/delete/:code', (req, res) => {
 });
 
 // ========================================
+// Blog API (콘텐츠 허브 — 스킨케어/뷰티 팁 아티클)
+// ========================================
+
+function slugify(title) {
+  return (title || '')
+    .toLowerCase()
+    .trim()
+    .replace(/[^\w\s-]/g, '')
+    .replace(/\s+/g, '-')
+    .replace(/-+/g, '-')
+    .slice(0, 80);
+}
+
+// Frontend - Blog List (게시된 글만)
+app.get('/datepalm-bay/api/mvp/blog/list', (req, res) => {
+  console.log('\n=== [Frontend] Blog List ===');
+  const pageNo = parseInt(req.query.pageNo) || 0;
+  const pageSize = parseInt(req.query.pageSize) || 9;
+  const { category, keyword } = req.query;
+
+  let filtered = blogPosts.filter(p => p.status === 'PUBLISHED');
+
+  if (category) {
+    filtered = filtered.filter(p => p.category === category);
+  }
+  if (keyword) {
+    filtered = filtered.filter(p =>
+      p.title.toLowerCase().includes(keyword.toLowerCase()) ||
+      (p.excerpt || '').toLowerCase().includes(keyword.toLowerCase())
+    );
+  }
+
+  filtered.sort((a, b) => new Date(b.publishedAt || b.createdAt) - new Date(a.publishedAt || a.createdAt));
+
+  const start = pageNo * pageSize;
+  const end = start + pageSize;
+  const paginated = filtered.slice(start, end);
+
+  res.json({
+    ok: true,
+    data: {
+      content: paginated,
+      pageable: { pageNumber: pageNo, pageSize },
+      totalElements: filtered.length,
+      totalPages: Math.ceil(filtered.length / pageSize),
+      size: pageSize,
+      number: pageNo,
+      first: pageNo === 0,
+      last: pageNo >= Math.floor(filtered.length / pageSize),
+      numberOfElements: paginated.length,
+    },
+    message: 'Blog list retrieved successfully'
+  });
+});
+
+// Frontend - Blog Detail (slug 기준, 게시된 글만)
+app.get('/datepalm-bay/api/mvp/blog/detail/:slug', (req, res) => {
+  console.log('\n=== [Frontend] Blog Detail ===');
+  const { slug } = req.params;
+  const post = blogPosts.find(p => p.slug === slug && p.status === 'PUBLISHED');
+
+  if (!post) {
+    return res.status(404).json({ ok: false, data: null, message: 'Blog post not found' });
+  }
+
+  res.json({ ok: true, data: post, message: 'Blog post retrieved successfully' });
+});
+
+// Admin - Blog List (모든 상태 포함)
+app.get('/datepalm-bay/api/admin/blog/list', (req, res) => {
+  console.log('\n=== [Admin] Blog List ===');
+  const pageNo = parseInt(req.query.pageNo) || 0;
+  const pageSize = parseInt(req.query.pageSize) || 10;
+  const { status, category, keyword } = req.query;
+
+  let filtered = [...blogPosts];
+
+  if (status) {
+    filtered = filtered.filter(p => p.status === status);
+  }
+  if (category) {
+    filtered = filtered.filter(p => p.category === category);
+  }
+  if (keyword) {
+    filtered = filtered.filter(p => p.title.toLowerCase().includes(keyword.toLowerCase()));
+  }
+
+  filtered.sort((a, b) => new Date(b.createdAt) - new Date(a.createdAt));
+
+  const start = pageNo * pageSize;
+  const end = start + pageSize;
+  const paginated = filtered.slice(start, end);
+
+  res.json({
+    ok: true,
+    data: {
+      content: paginated,
+      pageable: { pageNumber: pageNo, pageSize },
+      totalElements: filtered.length,
+      totalPages: Math.ceil(filtered.length / pageSize),
+      size: pageSize,
+      number: pageNo,
+      first: pageNo === 0,
+      last: pageNo >= Math.floor(filtered.length / pageSize),
+      numberOfElements: paginated.length,
+    },
+    message: 'Admin blog list retrieved successfully'
+  });
+});
+
+// Admin - Blog Detail
+app.get('/datepalm-bay/api/admin/blog/detail/:code', (req, res) => {
+  console.log('\n=== [Admin] Blog Detail ===');
+  const { code } = req.params;
+  const post = blogPosts.find(p => p.code === code);
+
+  if (!post) {
+    return res.status(404).json({ ok: false, data: null, message: 'Blog post not found' });
+  }
+
+  res.json({ ok: true, data: post, message: 'Blog post detail retrieved successfully' });
+});
+
+// Admin - Create Blog Post
+app.post('/datepalm-bay/api/admin/blog/create', upload.fields([
+  { name: 'thumbnailImage', maxCount: 1 },
+  { name: 'request', maxCount: 1 }
+]), (req, res) => {
+  console.log('\n=== [Admin] Create Blog Post ===');
+
+  let requestData;
+  try {
+    requestData = req.body.request ? JSON.parse(req.body.request) : req.body;
+  } catch (e) {
+    requestData = req.body;
+  }
+
+  const code = `BLOG-${Date.now()}`;
+  const baseSlug = requestData.slug ? slugify(requestData.slug) : slugify(requestData.title);
+  let slug = baseSlug;
+  let dupeIndex = 1;
+  while (blogPosts.some(p => p.slug === slug)) {
+    slug = `${baseSlug}-${++dupeIndex}`;
+  }
+
+  const thumbnailFiles = req.files?.thumbnailImage;
+  const blogBaseUrl = getBaseUrl(req);
+  const thumbnailImage = thumbnailFiles?.[0]
+    ? `${blogBaseUrl}/uploads/${thumbnailFiles[0].filename}`
+    : 'https://via.placeholder.com/800x500?text=Datepalm+Bay+Blog';
+
+  const status = requestData.status === 'PUBLISHED' ? 'PUBLISHED' : 'DRAFT';
+  const now = new Date().toISOString();
+
+  const newPost = {
+    code,
+    slug,
+    title: requestData.title,
+    excerpt: requestData.excerpt || '',
+    content: requestData.content || '',
+    thumbnailImage,
+    author: requestData.author || 'Datepalm Bay Team',
+    category: requestData.category || 'GENERAL',
+    status,
+    publishedAt: status === 'PUBLISHED' ? now : null,
+    createdAt: now,
+    updatedAt: now,
+  };
+
+  blogPosts.push(newPost);
+  console.log(`Blog post created: ${code} (${slug})`);
+  saveData();
+
+  contentTranslator.translateBlogPostFields(newPost)
+    .then((changed) => { if (changed) saveData(); })
+    .catch((err) => console.error('[Blog] 번역 실패:', err.message));
+
+  res.json({ ok: true, data: newPost, message: 'Blog post created successfully' });
+});
+
+// Admin - Edit Blog Post
+app.put('/datepalm-bay/api/admin/blog/edit', upload.fields([
+  { name: 'thumbnailImage', maxCount: 1 },
+  { name: 'request', maxCount: 1 }
+]), (req, res) => {
+  console.log('\n=== [Admin] Edit Blog Post ===');
+
+  let requestData;
+  try {
+    requestData = req.body.request ? JSON.parse(req.body.request) : req.body;
+  } catch (e) {
+    requestData = req.body;
+  }
+
+  const postIndex = blogPosts.findIndex(p => p.code === requestData.code);
+  if (postIndex === -1) {
+    return res.status(404).json({ ok: false, data: null, message: 'Blog post not found' });
+  }
+
+  const existingPost = blogPosts[postIndex];
+
+  let slug = existingPost.slug;
+  const requestedSlug = requestData.slug ? slugify(requestData.slug) : null;
+  if (requestedSlug && requestedSlug !== existingPost.slug) {
+    slug = requestedSlug;
+    let dupeIndex = 1;
+    while (blogPosts.some(p => p.slug === slug && p.code !== existingPost.code)) {
+      slug = `${requestedSlug}-${++dupeIndex}`;
+    }
+  }
+
+  const thumbnailFiles = req.files?.thumbnailImage;
+  const editBlogBaseUrl = getBaseUrl(req);
+  const thumbnailImage = thumbnailFiles?.[0]
+    ? `${editBlogBaseUrl}/uploads/${thumbnailFiles[0].filename}`
+    : existingPost.thumbnailImage;
+
+  const status = requestData.status === 'PUBLISHED' ? 'PUBLISHED' : 'DRAFT';
+  const wasPublished = existingPost.status === 'PUBLISHED';
+  const contentChanged = requestData.title !== existingPost.title
+    || requestData.excerpt !== existingPost.excerpt
+    || requestData.content !== existingPost.content;
+
+  blogPosts[postIndex] = {
+    ...existingPost,
+    slug,
+    title: requestData.title,
+    excerpt: requestData.excerpt || '',
+    content: requestData.content || '',
+    thumbnailImage,
+    author: requestData.author || existingPost.author,
+    category: requestData.category || existingPost.category,
+    status,
+    publishedAt: status === 'PUBLISHED' ? (existingPost.publishedAt || (!wasPublished ? new Date().toISOString() : existingPost.publishedAt)) : existingPost.publishedAt,
+    updatedAt: new Date().toISOString(),
+  };
+
+  console.log(`Blog post updated: ${requestData.code}`);
+  saveData();
+
+  if (contentChanged) {
+    contentTranslator.translateBlogPostFields(blogPosts[postIndex])
+      .then((changed) => { if (changed) saveData(); })
+      .catch((err) => console.error('[Blog] 번역 실패:', err.message));
+  }
+
+  res.json({ ok: true, data: blogPosts[postIndex], message: 'Blog post updated successfully' });
+});
+
+// Admin - Delete Blog Post
+app.delete('/datepalm-bay/api/admin/blog/delete/:code', (req, res) => {
+  console.log('\n=== [Admin] Delete Blog Post ===');
+  const { code } = req.params;
+
+  const postIndex = blogPosts.findIndex(p => p.code === code);
+  if (postIndex === -1) {
+    return res.status(404).json({ ok: false, data: null, message: 'Blog post not found' });
+  }
+
+  blogPosts.splice(postIndex, 1);
+  console.log(`Blog post deleted: ${code}`);
+  saveData();
+
+  res.json({ ok: true, data: null, message: 'Blog post deleted successfully' });
+});
+
+// ========================================
 // Banner API (홈 캐러셀 배너 관리)
 // ========================================
 
@@ -5941,6 +6211,7 @@ let customerOrders = [];
 
 // 상품 리뷰 저장소 (별점+사진, startServer()에서 MySQL/JSON으로부터 로드)
 let reviews = [];
+let blogPosts = [];
 
 // 주문 생성 API (주문 정보만 저장, PayPal 결제는 별도)
 app.post('/datepalm-bay/api/mvp/order/create', async (req, res) => {
@@ -8186,6 +8457,7 @@ async function startServer() {
   if (loadedData.settlements) settlements = loadedData.settlements;
   if (loadedData.platformSettings) platformSettings = loadedData.platformSettings;
   if (loadedData.reviews) reviews = loadedData.reviews;
+  if (loadedData.blogPosts) blogPosts = loadedData.blogPosts;
 
   // 4. 더미/테스트 주문 데이터 정리
   const testOrderIds = ['ORDER-TEST-FEDEX-001', 'ORDER-TEST-002', 'ORDER-TEST-FEDEX-003'];

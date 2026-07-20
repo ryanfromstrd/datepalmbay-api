@@ -159,6 +159,38 @@ async function translateSnsReviewFields(review) {
 }
 
 /**
+ * 블로그 글 텍스트 필드 번역 (title/excerpt/content)
+ * post.translations = { ar: {...}, fr: {...} }
+ */
+async function translateBlogPostFields(post) {
+  if (!isAvailable()) return false;
+
+  const sourceFields = {
+    title: post.title || '',
+    excerpt: post.excerpt || '',
+    content: post.content || '',
+  };
+  const sourceHash = hashFields(sourceFields);
+
+  if (!post.translations) post.translations = {};
+  let changed = false;
+
+  for (const lang of SUPPORTED_LANGS) {
+    if (post.translations[lang]?.sourceHash === sourceHash) continue;
+    try {
+      const translated = await translateFields(sourceFields, lang);
+      post.translations[lang] = { ...translated, sourceHash, translatedAt: new Date().toISOString() };
+      changed = true;
+      console.log(`🌐 블로그 번역 완료: ${post.code} → ${lang}`);
+    } catch (error) {
+      console.error(`❌ 블로그 번역 실패 (${post.code} → ${lang}):`, error.message);
+    }
+  }
+
+  return changed;
+}
+
+/**
  * 임의의 짧은 텍스트(예: AI 요약 결과)를 번역 — 결과 캐싱은 호출부 책임
  */
 async function translateText(text, targetLang) {
@@ -176,5 +208,6 @@ module.exports = {
   translateFields,
   translateProductFields,
   translateSnsReviewFields,
+  translateBlogPostFields,
   translateText,
 };
