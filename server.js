@@ -108,6 +108,7 @@ async function loadData() {
           productInsights: mysqlData.productInsights || [],
           aiFeedbackHistory: mysqlData.aiFeedbackHistory || [],
           b2bUsers: mysqlData.b2bUsers || [],
+          b2bOrders: mysqlData.b2bOrders || [],
           sellers: mysqlData.sellers || [],
           settlements: mysqlData.settlements || [],
           platformSettings: mysqlData.platformSettings || null,
@@ -166,6 +167,7 @@ async function loadData() {
         productInsights: data.productInsights || [],
         aiFeedbackHistory: data.aiFeedbackHistory || [],
         b2bUsers: data.b2bUsers || [],
+        b2bOrders: data.b2bOrders || [],
         sellers: data.sellers || [],
         settlements: data.settlements || [],
         platformSettings: data.platformSettings || null,
@@ -209,6 +211,7 @@ async function _saveDataImpl() {
     productInsights: productInsights,
     aiFeedbackHistory: aiFeedbackHistory,
     b2bUsers: b2bUsers,
+    b2bOrders: b2bOrders,
     sellers: sellers,
     settlements: settlements,
     platformSettings: platformSettings,
@@ -473,6 +476,7 @@ const handleMulterError = (err, req, res, next) => {
 let products = [];
 let brands = [];
 let b2bUsers = [];
+let b2bOrders = [];
 let sellers = [];
 let settlements = [];
 let platformSettings = { defaultCommissionRate: 13.5 }; // 판매수수료 기본 요율(%) — 셀러별 commissionRateOverride가 우선
@@ -2089,6 +2093,7 @@ app.get('/datepalm-bay/api/b2b/products', (req, res) => {
   const { discountPercent } = session;
   const user = b2bUsers.find(u => u.id === session.userId);
   const assignedProducts = user?.assignedProducts || [];
+  const productPrices = user?.productPrices || {};
   let activeProducts = products.filter(p => p.productSaleStatus === true || p.productSaleStatus === 'true');
   if (assignedProducts.length > 0) {
     activeProducts = activeProducts.filter(p => assignedProducts.includes(p.productCode));
@@ -2099,7 +2104,10 @@ app.get('/datepalm-bay/api/b2b/products', (req, res) => {
   const b2bProducts = activeProducts.map(p => {
     const listPrice = p.productRegularPrice || p.regularPrice || p.price || 0;
     const retailPrice = p.productDiscountPrice > 0 ? p.productDiscountPrice : (p.productOriginPrice || p.price || listPrice);
-    const b2bPrice = Math.floor(listPrice * (1 - discountPercent / 100) * 100) / 100;
+    const priceOverride = productPrices[p.productCode];
+    const b2bPrice = (priceOverride !== undefined && priceOverride !== null && priceOverride !== '')
+      ? parseFloat(priceOverride)
+      : Math.floor(listPrice * (1 - discountPercent / 100) * 100) / 100;
     return {
       code: p.productCode || p.code,
       name: p.productName || p.name,
@@ -2119,6 +2127,153 @@ app.get('/datepalm-bay/api/b2b/products', (req, res) => {
     data: b2bProducts,
     message: `${b2bProducts.length} products retrieved`,
   });
+});
+
+// B2B 주문 생성 (카탈로그에서 수량·배송비 입력 후 주문서 생성, 결제는 별도 PayPal 단계)
+app.post('/datepalm-bay/api/b2b/order/create', (req, res) => {
+  const session = validateB2BToken(req);
+  if (!session) {
+    return res.status(401).json({ ok: false, data: null, message: 'B2B authentication required.' });
+  }
+
+  const { items, shippingCost } = req.body.data || req.body;
+  if (!Array.isArray(items) || items.length === 0) {
+    return res.status(400).json({ ok: false, data: null, message: 'At least one item with quantity is required.' });
+  }
+
+  const user = b2bUsers.find(u => u.id === session.userId);
+  if (!user) {
+    return res.status(404).json({ ok: false, data: null, message: 'B2B user not found.' });
+  }
+
+  const assignedProducts = user.assignedProducts || [];
+  const productPrices = user.productPrices || {};
+  const discountPercent = user.discountPercent || 0;
+
+  const orderItems = [];
+  for (const item of items) {
+    const quantity = parseInt(item.quantity, 10);
+    if (!item.code || !quantity || quantity <= 0) continue;
+
+    const product = products.find(p => p.productCode === item.code && (p.productSaleStatus === true || p.productSaleStatus === 'true'));
+    if (!product) {
+      return res.status(400).json({ ok: false, data: null, message: `Product not found or unavailable: ${item.code}` });
+    }
+    if (assignedProducts.length > 0 && !assignedProducts.includes(item.code)) {
+      return res.status(403).json({ ok: false, data: null, message: `Product not available for this account: ${item.code}` });
+    }
+
+    // 가격은 항상 서버가 재계산 — 클라이언트가 보낸 값은 신뢰하지 않음
+    const listPrice = product.productRegularPrice || product.regularPrice || product.price || 0;
+    const priceOverride = productPrices[item.code];
+    const unitPrice = (priceOverride !== undefined && priceOverride !== null && priceOverride !== '')
+      ? parseFloat(priceOverride)
+      : Math.floor(listPrice * (1 - discountPercent / 100) * 100) / 100;
+
+    orderItems.push({
+      code: item.code,
+      name: product.productName,
+      quantity,
+      unitPrice,
+      lineTotal: Math.round(unitPrice * quantity * 100) / 100,
+    });
+  }
+
+  if (orderItems.length === 0) {
+    return res.status(400).json({ ok: false, data: null, message: 'No valid items in order.' });
+  }
+
+  const parsedShippingCost = Math.max(0, parseFloat(shippingCost) || 0);
+  const itemsTotal = orderItems.reduce((sum, i) => sum + i.lineTotal, 0);
+  const total = Math.round((itemsTotal + parsedShippingCost) * 100) / 100;
+
+  const orderId = `B2B-${Date.now()}-${Math.random().toString(36).substring(2, 8).toUpperCase()}`;
+  const newOrder = {
+    orderId,
+    b2bUserId: user.id,
+    companyName: user.companyName,
+    items: orderItems,
+    itemsTotal,
+    shippingCost: parsedShippingCost,
+    total,
+    currency: 'USD',
+    status: 'PENDING',
+    paypalOrderId: null,
+    captureId: null,
+    paidAt: null,
+    createdAt: new Date().toISOString(),
+  };
+
+  b2bOrders.push(newOrder);
+  saveData();
+
+  console.log(`✅ [B2B] 주문 생성: ${orderId} (${user.companyName}, $${total})`);
+
+  res.json({ ok: true, data: newOrder, message: 'B2B order created' });
+});
+
+// B2B PayPal 주문 생성
+app.post('/datepalm-bay/api/b2b/paypal/create-order', async (req, res) => {
+  const session = validateB2BToken(req);
+  if (!session) {
+    return res.status(401).json({ ok: false, data: null, message: 'B2B authentication required.' });
+  }
+
+  const { orderId } = req.body.data || req.body;
+  const order = b2bOrders.find(o => o.orderId === orderId && o.b2bUserId === session.userId);
+  if (!order) {
+    return res.status(404).json({ ok: false, data: null, message: 'B2B order not found.' });
+  }
+  if (order.status !== 'PENDING') {
+    return res.status(400).json({ ok: false, data: null, message: 'Order is not payable.' });
+  }
+
+  try {
+    const paypalOrder = await paypalService.createOrder({
+      orderId: order.orderId,
+      amount: order.total,
+      orderName: `B2B Order - ${order.companyName}`,
+      currency: 'USD',
+    });
+
+    order.paypalOrderId = paypalOrder.id;
+    saveData();
+
+    res.json({ ok: true, data: { paypalOrderId: paypalOrder.id }, message: 'PayPal order created' });
+  } catch (error) {
+    console.error('[B2B] PayPal create order error:', error);
+    res.status(500).json({ ok: false, data: null, message: error.message || 'Failed to create PayPal order' });
+  }
+});
+
+// B2B PayPal 결제 승인(Capture)
+app.post('/datepalm-bay/api/b2b/paypal/capture-order', async (req, res) => {
+  const session = validateB2BToken(req);
+  if (!session) {
+    return res.status(401).json({ ok: false, data: null, message: 'B2B authentication required.' });
+  }
+
+  const { paypalOrderId } = req.body.data || req.body;
+  const order = b2bOrders.find(o => o.paypalOrderId === paypalOrderId && o.b2bUserId === session.userId);
+  if (!order) {
+    return res.status(404).json({ ok: false, data: null, message: 'B2B order not found.' });
+  }
+
+  try {
+    const captureResult = await paypalService.captureOrder(paypalOrderId);
+
+    order.status = 'PAID';
+    order.captureId = captureResult.purchase_units?.[0]?.payments?.captures?.[0]?.id || null;
+    order.paidAt = new Date().toISOString();
+    saveData();
+
+    console.log(`✅ [B2B] 결제 완료: ${order.orderId} ($${order.total})`);
+
+    res.json({ ok: true, data: order, message: 'Payment completed' });
+  } catch (error) {
+    console.error('[B2B] PayPal capture error:', error);
+    res.status(500).json({ ok: false, data: null, message: error.message || 'Failed to capture PayPal payment' });
+  }
 });
 
 // ========================================
@@ -2148,6 +2303,7 @@ app.post('/datepalm-bay/api/admin/b2b/users/create', (req, res) => {
     contactEmail: contactEmail || '',
     discountPercent: parseFloat(discountPercent) || 0,
     assignedProducts: [],
+    productPrices: {},
     isActive: true,
     createdAt: new Date().toISOString(),
   };
@@ -2160,7 +2316,7 @@ app.post('/datepalm-bay/api/admin/b2b/users/create', (req, res) => {
 
 // B2B 유저 수정
 app.put('/datepalm-bay/api/admin/b2b/users/edit', (req, res) => {
-  const { id, password, companyName, contactEmail, discountPercent, assignedProducts, isActive } = req.body.data || req.body;
+  const { id, password, companyName, contactEmail, discountPercent, assignedProducts, productPrices, isActive } = req.body.data || req.body;
 
   const user = b2bUsers.find(u => u.id === id);
   if (!user) return res.status(404).json({ ok: false, data: null, message: 'B2B user not found.' });
@@ -2170,6 +2326,7 @@ app.put('/datepalm-bay/api/admin/b2b/users/edit', (req, res) => {
   if (contactEmail !== undefined) user.contactEmail = contactEmail;
   if (discountPercent !== undefined) user.discountPercent = parseFloat(discountPercent) || 0;
   if (assignedProducts !== undefined) user.assignedProducts = Array.isArray(assignedProducts) ? assignedProducts : [];
+  if (productPrices !== undefined) user.productPrices = (productPrices && typeof productPrices === 'object') ? productPrices : {};
   if (isActive !== undefined) user.isActive = isActive;
 
   saveData();
@@ -8458,6 +8615,7 @@ async function startServer() {
   if (loadedData.snsReviews && loadedData.snsReviews.length > 0) snsReviews = loadedData.snsReviews;
   if (loadedData.orders) customerOrders = loadedData.orders;
   if (loadedData.b2bUsers) b2bUsers = loadedData.b2bUsers;
+  if (loadedData.b2bOrders) b2bOrders = loadedData.b2bOrders;
   if (loadedData.snsReviewOverrides) snsReviewOverrides = loadedData.snsReviewOverrides;
   if (loadedData.productInsights) productInsights = loadedData.productInsights;
   if (loadedData.aiFeedbackHistory) aiFeedbackHistory = loadedData.aiFeedbackHistory;
