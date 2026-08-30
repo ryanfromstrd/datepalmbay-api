@@ -2067,6 +2067,7 @@ app.post('/datepalm-bay/api/b2b/login', (req, res) => {
       companyName: user.companyName,
       discountPercent: user.discountPercent || 0,
       contactEmail: user.contactEmail || '',
+      currency: user.currency || 'USD',
     },
     message: 'Login successful',
   });
@@ -2084,7 +2085,7 @@ app.post('/datepalm-bay/api/b2b/logout', (req, res) => {
 });
 
 // B2B 상품 목록 (할인 가격 포함)
-app.get('/datepalm-bay/api/b2b/products', (req, res) => {
+app.get('/datepalm-bay/api/b2b/products', async (req, res) => {
   const session = validateB2BToken(req);
   if (!session) {
     return res.status(401).json({ ok: false, data: null, message: 'B2B authentication required.' });
@@ -2095,6 +2096,7 @@ app.get('/datepalm-bay/api/b2b/products', (req, res) => {
   const assignedProducts = user?.assignedProducts || [];
   const productPrices = user?.productPrices || {};
   const customItems = user?.customItems || [];
+  const targetCurrency = user?.currency || 'USD';
   let activeProducts = user?.catalogHidden
     ? []
     : products.filter(p => p.productSaleStatus === true || p.productSaleStatus === 'true');
@@ -2102,22 +2104,34 @@ app.get('/datepalm-bay/api/b2b/products', (req, res) => {
     activeProducts = activeProducts.filter(p => assignedProducts.includes(p.productCode));
   }
 
-  console.log(`[B2B] products 전체: ${products.length}, 판매중: ${activeProducts.length}, discount: ${discountPercent}%, 지정상품: ${assignedProducts.length || '전체'}, 커스텀: ${customItems.length}, 카탈로그숨김: ${!!user?.catalogHidden}`);
+  console.log(`[B2B] products 전체: ${products.length}, 판매중: ${activeProducts.length}, discount: ${discountPercent}%, 지정상품: ${assignedProducts.length || '전체'}, 커스텀: ${customItems.length}, 카탈로그숨김: ${!!user?.catalogHidden}, 통화: ${targetCurrency}`);
+
+  // USD → 계정 통화 변환에 쓸 환율을 한 번만 조회
+  let fxRate = 1;
+  if (targetCurrency !== 'USD') {
+    try {
+      const converted = await currencyService.convertFromUSD(1, targetCurrency);
+      fxRate = converted.fxRate;
+    } catch (err) {
+      console.error('[B2B] 환율 조회 실패, USD로 진행:', err.message);
+    }
+  }
+  const toTargetCurrency = (usdAmount) => currencyService.roundForCurrency(usdAmount * fxRate, targetCurrency);
 
   const b2bProducts = activeProducts.map(p => {
     const listPrice = p.productRegularPrice || p.regularPrice || p.price || 0;
     const retailPrice = p.productDiscountPrice > 0 ? p.productDiscountPrice : (p.productOriginPrice || p.price || listPrice);
     const priceOverride = productPrices[p.productCode];
-    const b2bPrice = (priceOverride !== undefined && priceOverride !== null && priceOverride !== '')
+    const b2bPriceUSD = (priceOverride !== undefined && priceOverride !== null && priceOverride !== '')
       ? parseFloat(priceOverride)
       : Math.floor(listPrice * (1 - discountPercent / 100) * 100) / 100;
     return {
       code: p.productCode || p.code,
       name: p.productName || p.name,
       summary: p.productNote || p.summary || '',
-      regularPrice: listPrice,
-      retailPrice,
-      b2bPrice,
+      regularPrice: toTargetCurrency(listPrice),
+      retailPrice: toTargetCurrency(retailPrice),
+      b2bPrice: toTargetCurrency(b2bPriceUSD),
       discountPercent,
       thumbnailUrl: (p.mainImages && p.mainImages[0]?.url) || p.thumbnailUrl || '',
       brand: p.brand || '',
@@ -2130,9 +2144,9 @@ app.get('/datepalm-bay/api/b2b/products', (req, res) => {
     code: c.id,
     name: c.name,
     summary: '',
-    regularPrice: c.price,
-    retailPrice: c.price,
-    b2bPrice: c.price,
+    regularPrice: toTargetCurrency(c.price),
+    retailPrice: toTargetCurrency(c.price),
+    b2bPrice: toTargetCurrency(c.price),
     discountPercent: 0,
     thumbnailUrl: '',
     brand: '',
@@ -2145,12 +2159,13 @@ app.get('/datepalm-bay/api/b2b/products', (req, res) => {
   res.json({
     ok: true,
     data: allItems,
+    currency: targetCurrency,
     message: `${allItems.length} products retrieved`,
   });
 });
 
 // B2B 주문 생성 (카탈로그에서 수량·배송비 입력 후 주문서 생성, 결제는 별도 PayPal 단계)
-app.post('/datepalm-bay/api/b2b/order/create', (req, res) => {
+app.post('/datepalm-bay/api/b2b/order/create', async (req, res) => {
   const session = validateB2BToken(req);
   if (!session) {
     return res.status(401).json({ ok: false, data: null, message: 'B2B authentication required.' });
@@ -2170,6 +2185,19 @@ app.post('/datepalm-bay/api/b2b/order/create', (req, res) => {
   const productPrices = user.productPrices || {};
   const customItems = user.customItems || [];
   const discountPercent = user.discountPercent || 0;
+  const targetCurrency = user.currency || 'USD';
+
+  // USD → 계정 통화 변환에 쓸 환율을 한 번만 조회 (가격은 항상 서버가 USD 기준으로 재계산 후 변환 — 클라이언트가 보낸 값은 신뢰하지 않음)
+  let fxRate = 1;
+  if (targetCurrency !== 'USD') {
+    try {
+      const converted = await currencyService.convertFromUSD(1, targetCurrency);
+      fxRate = converted.fxRate;
+    } catch (err) {
+      console.error('[B2B] 환율 조회 실패, USD로 진행:', err.message);
+    }
+  }
+  const toTargetCurrency = (usdAmount) => currencyService.roundForCurrency(usdAmount * fxRate, targetCurrency);
 
   const orderItems = [];
   for (const item of items) {
@@ -2178,12 +2206,13 @@ app.post('/datepalm-bay/api/b2b/order/create', (req, res) => {
 
     const customItem = customItems.find(c => c.id === item.code);
     if (customItem) {
+      const unitPrice = toTargetCurrency(customItem.price);
       orderItems.push({
         code: customItem.id,
         name: customItem.name,
         quantity,
-        unitPrice: customItem.price,
-        lineTotal: Math.round(customItem.price * quantity * 100) / 100,
+        unitPrice,
+        lineTotal: currencyService.roundForCurrency(unitPrice * quantity, targetCurrency),
       });
       continue;
     }
@@ -2200,19 +2229,19 @@ app.post('/datepalm-bay/api/b2b/order/create', (req, res) => {
       return res.status(403).json({ ok: false, data: null, message: `Product not available for this account: ${item.code}` });
     }
 
-    // 가격은 항상 서버가 재계산 — 클라이언트가 보낸 값은 신뢰하지 않음
     const listPrice = product.productRegularPrice || product.regularPrice || product.price || 0;
     const priceOverride = productPrices[item.code];
-    const unitPrice = (priceOverride !== undefined && priceOverride !== null && priceOverride !== '')
+    const unitPriceUSD = (priceOverride !== undefined && priceOverride !== null && priceOverride !== '')
       ? parseFloat(priceOverride)
       : Math.floor(listPrice * (1 - discountPercent / 100) * 100) / 100;
+    const unitPrice = toTargetCurrency(unitPriceUSD);
 
     orderItems.push({
       code: item.code,
       name: product.productName,
       quantity,
       unitPrice,
-      lineTotal: Math.round(unitPrice * quantity * 100) / 100,
+      lineTotal: currencyService.roundForCurrency(unitPrice * quantity, targetCurrency),
     });
   }
 
@@ -2222,7 +2251,7 @@ app.post('/datepalm-bay/api/b2b/order/create', (req, res) => {
 
   const parsedShippingCost = Math.max(0, parseFloat(shippingCost) || 0);
   const itemsTotal = orderItems.reduce((sum, i) => sum + i.lineTotal, 0);
-  const total = Math.round((itemsTotal + parsedShippingCost) * 100) / 100;
+  const total = currencyService.roundForCurrency(itemsTotal + parsedShippingCost, targetCurrency);
 
   const orderId = `B2B-${Date.now()}-${Math.random().toString(36).substring(2, 8).toUpperCase()}`;
   const newOrder = {
@@ -2233,7 +2262,7 @@ app.post('/datepalm-bay/api/b2b/order/create', (req, res) => {
     itemsTotal,
     shippingCost: parsedShippingCost,
     total,
-    currency: 'USD',
+    currency: targetCurrency,
     status: 'PENDING',
     paypalOrderId: null,
     captureId: null,
@@ -2244,7 +2273,7 @@ app.post('/datepalm-bay/api/b2b/order/create', (req, res) => {
   b2bOrders.push(newOrder);
   saveData();
 
-  console.log(`✅ [B2B] 주문 생성: ${orderId} (${user.companyName}, $${total})`);
+  console.log(`✅ [B2B] 주문 생성: ${orderId} (${user.companyName}, ${total} ${targetCurrency})`);
 
   res.json({ ok: true, data: newOrder, message: 'B2B order created' });
 });
@@ -2270,7 +2299,7 @@ app.post('/datepalm-bay/api/b2b/paypal/create-order', async (req, res) => {
       orderId: order.orderId,
       amount: order.total,
       orderName: `B2B Order - ${order.companyName}`,
-      currency: 'USD',
+      currency: order.currency || 'USD',
     });
 
     order.paypalOrderId = paypalOrder.id;
@@ -2323,8 +2352,10 @@ app.get('/datepalm-bay/api/admin/b2b/users', (req, res) => {
 });
 
 // B2B 유저 생성
+const B2B_SUPPORTED_CURRENCIES = ['USD', 'EUR'];
+
 app.post('/datepalm-bay/api/admin/b2b/users/create', (req, res) => {
-  const { id, password, companyName, contactEmail, discountPercent } = req.body.data || req.body;
+  const { id, password, companyName, contactEmail, discountPercent, currency } = req.body.data || req.body;
 
   if (!id || !password || !companyName) {
     return res.status(400).json({ ok: false, data: null, message: 'id, password, companyName are required.' });
@@ -2339,6 +2370,7 @@ app.post('/datepalm-bay/api/admin/b2b/users/create', (req, res) => {
     companyName,
     contactEmail: contactEmail || '',
     discountPercent: parseFloat(discountPercent) || 0,
+    currency: B2B_SUPPORTED_CURRENCIES.includes(currency) ? currency : 'USD',
     assignedProducts: [],
     productPrices: {},
     customItems: [],
@@ -2355,7 +2387,7 @@ app.post('/datepalm-bay/api/admin/b2b/users/create', (req, res) => {
 
 // B2B 유저 수정
 app.put('/datepalm-bay/api/admin/b2b/users/edit', (req, res) => {
-  const { id, password, companyName, contactEmail, discountPercent, assignedProducts, productPrices, customItems, catalogHidden, isActive } = req.body.data || req.body;
+  const { id, password, companyName, contactEmail, discountPercent, currency, assignedProducts, productPrices, customItems, catalogHidden, isActive } = req.body.data || req.body;
 
   const user = b2bUsers.find(u => u.id === id);
   if (!user) return res.status(404).json({ ok: false, data: null, message: 'B2B user not found.' });
@@ -2364,6 +2396,7 @@ app.put('/datepalm-bay/api/admin/b2b/users/edit', (req, res) => {
   if (companyName !== undefined) user.companyName = companyName;
   if (contactEmail !== undefined) user.contactEmail = contactEmail;
   if (discountPercent !== undefined) user.discountPercent = parseFloat(discountPercent) || 0;
+  if (currency !== undefined) user.currency = B2B_SUPPORTED_CURRENCIES.includes(currency) ? currency : 'USD';
   if (assignedProducts !== undefined) user.assignedProducts = Array.isArray(assignedProducts) ? assignedProducts : [];
   if (productPrices !== undefined) user.productPrices = (productPrices && typeof productPrices === 'object') ? productPrices : {};
   if (catalogHidden !== undefined) user.catalogHidden = !!catalogHidden;
