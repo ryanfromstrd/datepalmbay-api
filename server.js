@@ -2035,7 +2035,8 @@ app.put('/datepalm-bay/api/admin/order/status', (req, res) => {
 
 // B2B 로그인
 app.post('/datepalm-bay/api/b2b/login', (req, res) => {
-  const { id, password } = req.body;
+  const id = (req.body.id || '').trim();
+  const password = (req.body.password || '').trim();
   if (!id || !password) {
     return res.status(400).json({ ok: false, data: null, message: 'ID and password are required.' });
   }
