@@ -2095,6 +2095,7 @@ app.get('/datepalm-bay/api/b2b/products', async (req, res) => {
   const user = b2bUsers.find(u => u.id === session.userId);
   const assignedProducts = user?.assignedProducts || [];
   const productPrices = user?.productPrices || {};
+  const unitsPerBoxMap = user?.unitsPerBox || {};
   const customItems = user?.customItems || [];
   const targetCurrency = user?.currency || 'USD';
   let activeProducts = user?.catalogHidden
@@ -2133,6 +2134,7 @@ app.get('/datepalm-bay/api/b2b/products', async (req, res) => {
       retailPrice: toTargetCurrency(retailPrice),
       b2bPrice: toTargetCurrency(b2bPriceUSD),
       discountPercent,
+      unitsPerBox: parseInt(unitsPerBoxMap[p.productCode], 10) > 0 ? parseInt(unitsPerBoxMap[p.productCode], 10) : 1,
       thumbnailUrl: (p.mainImages && p.mainImages[0]?.url) || p.thumbnailUrl || '',
       brand: p.brand || '',
       category: p.category || '',
@@ -2148,6 +2150,7 @@ app.get('/datepalm-bay/api/b2b/products', async (req, res) => {
     retailPrice: toTargetCurrency(c.price),
     b2bPrice: toTargetCurrency(c.price),
     discountPercent: 0,
+    unitsPerBox: parseInt(c.unitsPerBox, 10) > 0 ? parseInt(c.unitsPerBox, 10) : 1,
     thumbnailUrl: '',
     brand: '',
     category: '',
@@ -2173,7 +2176,7 @@ app.post('/datepalm-bay/api/b2b/order/create', async (req, res) => {
 
   const { items, shippingCost } = req.body.data || req.body;
   if (!Array.isArray(items) || items.length === 0) {
-    return res.status(400).json({ ok: false, data: null, message: 'At least one item with quantity is required.' });
+    return res.status(400).json({ ok: false, data: null, message: 'At least one item with a box count is required.' });
   }
 
   const user = b2bUsers.find(u => u.id === session.userId);
@@ -2183,6 +2186,7 @@ app.post('/datepalm-bay/api/b2b/order/create', async (req, res) => {
 
   const assignedProducts = user.assignedProducts || [];
   const productPrices = user.productPrices || {};
+  const unitsPerBoxMap = user.unitsPerBox || {};
   const customItems = user.customItems || [];
   const discountPercent = user.discountPercent || 0;
   const targetCurrency = user.currency || 'USD';
@@ -2201,15 +2205,19 @@ app.post('/datepalm-bay/api/b2b/order/create', async (req, res) => {
 
   const orderItems = [];
   for (const item of items) {
-    const quantity = parseInt(item.quantity, 10);
-    if (!item.code || !quantity || quantity <= 0) continue;
+    const boxes = parseInt(item.boxes, 10);
+    if (!item.code || !boxes || boxes <= 0) continue;
 
     const customItem = customItems.find(c => c.id === item.code);
     if (customItem) {
+      const unitsPerBox = parseInt(customItem.unitsPerBox, 10) > 0 ? parseInt(customItem.unitsPerBox, 10) : 1;
+      const quantity = boxes * unitsPerBox;
       const unitPrice = toTargetCurrency(customItem.price);
       orderItems.push({
         code: customItem.id,
         name: customItem.name,
+        boxes,
+        unitsPerBox,
         quantity,
         unitPrice,
         lineTotal: currencyService.roundForCurrency(unitPrice * quantity, targetCurrency),
@@ -2229,6 +2237,8 @@ app.post('/datepalm-bay/api/b2b/order/create', async (req, res) => {
       return res.status(403).json({ ok: false, data: null, message: `Product not available for this account: ${item.code}` });
     }
 
+    const unitsPerBox = parseInt(unitsPerBoxMap[item.code], 10) > 0 ? parseInt(unitsPerBoxMap[item.code], 10) : 1;
+    const quantity = boxes * unitsPerBox;
     const listPrice = product.productRegularPrice || product.regularPrice || product.price || 0;
     const priceOverride = productPrices[item.code];
     const unitPriceUSD = (priceOverride !== undefined && priceOverride !== null && priceOverride !== '')
@@ -2239,6 +2249,8 @@ app.post('/datepalm-bay/api/b2b/order/create', async (req, res) => {
     orderItems.push({
       code: item.code,
       name: product.productName,
+      boxes,
+      unitsPerBox,
       quantity,
       unitPrice,
       lineTotal: currencyService.roundForCurrency(unitPrice * quantity, targetCurrency),
@@ -2373,6 +2385,7 @@ app.post('/datepalm-bay/api/admin/b2b/users/create', (req, res) => {
     currency: B2B_SUPPORTED_CURRENCIES.includes(currency) ? currency : 'USD',
     assignedProducts: [],
     productPrices: {},
+    unitsPerBox: {},
     customItems: [],
     catalogHidden: false,
     isActive: true,
@@ -2387,7 +2400,7 @@ app.post('/datepalm-bay/api/admin/b2b/users/create', (req, res) => {
 
 // B2B 유저 수정
 app.put('/datepalm-bay/api/admin/b2b/users/edit', (req, res) => {
-  const { id, password, companyName, contactEmail, discountPercent, currency, assignedProducts, productPrices, customItems, catalogHidden, isActive } = req.body.data || req.body;
+  const { id, password, companyName, contactEmail, discountPercent, currency, assignedProducts, productPrices, unitsPerBox, customItems, catalogHidden, isActive } = req.body.data || req.body;
 
   const user = b2bUsers.find(u => u.id === id);
   if (!user) return res.status(404).json({ ok: false, data: null, message: 'B2B user not found.' });
@@ -2399,12 +2412,18 @@ app.put('/datepalm-bay/api/admin/b2b/users/edit', (req, res) => {
   if (currency !== undefined) user.currency = B2B_SUPPORTED_CURRENCIES.includes(currency) ? currency : 'USD';
   if (assignedProducts !== undefined) user.assignedProducts = Array.isArray(assignedProducts) ? assignedProducts : [];
   if (productPrices !== undefined) user.productPrices = (productPrices && typeof productPrices === 'object') ? productPrices : {};
+  if (unitsPerBox !== undefined) user.unitsPerBox = (unitsPerBox && typeof unitsPerBox === 'object') ? unitsPerBox : {};
   if (catalogHidden !== undefined) user.catalogHidden = !!catalogHidden;
   if (customItems !== undefined) {
     user.customItems = Array.isArray(customItems)
       ? customItems
           .filter(c => c && c.id && c.name && !isNaN(parseFloat(c.price)))
-          .map(c => ({ id: String(c.id), name: String(c.name), price: parseFloat(c.price) }))
+          .map(c => ({
+            id: String(c.id),
+            name: String(c.name),
+            price: parseFloat(c.price),
+            unitsPerBox: parseInt(c.unitsPerBox, 10) > 0 ? parseInt(c.unitsPerBox, 10) : 1,
+          }))
       : [];
   }
   if (isActive !== undefined) user.isActive = isActive;
