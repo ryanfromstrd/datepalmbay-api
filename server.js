@@ -2086,9 +2086,14 @@ app.get('/datepalm-bay/api/b2b/products', (req, res) => {
   }
 
   const { discountPercent } = session;
-  const activeProducts = products.filter(p => p.productSaleStatus === true || p.productSaleStatus === 'true');
+  const user = b2bUsers.find(u => u.id === session.userId);
+  const assignedProducts = user?.assignedProducts || [];
+  let activeProducts = products.filter(p => p.productSaleStatus === true || p.productSaleStatus === 'true');
+  if (assignedProducts.length > 0) {
+    activeProducts = activeProducts.filter(p => assignedProducts.includes(p.productCode));
+  }
 
-  console.log(`[B2B] products 전체: ${products.length}, 판매중: ${activeProducts.length}, discount: ${discountPercent}%`);
+  console.log(`[B2B] products 전체: ${products.length}, 판매중: ${activeProducts.length}, discount: ${discountPercent}%, 지정상품: ${assignedProducts.length || '전체'}`);
 
   const b2bProducts = activeProducts.map(p => {
     const listPrice = p.productRegularPrice || p.regularPrice || p.price || 0;
@@ -2141,6 +2146,7 @@ app.post('/datepalm-bay/api/admin/b2b/users/create', (req, res) => {
     companyName,
     contactEmail: contactEmail || '',
     discountPercent: parseFloat(discountPercent) || 0,
+    assignedProducts: [],
     isActive: true,
     createdAt: new Date().toISOString(),
   };
@@ -2153,7 +2159,7 @@ app.post('/datepalm-bay/api/admin/b2b/users/create', (req, res) => {
 
 // B2B 유저 수정
 app.put('/datepalm-bay/api/admin/b2b/users/edit', (req, res) => {
-  const { id, password, companyName, contactEmail, discountPercent, isActive } = req.body.data || req.body;
+  const { id, password, companyName, contactEmail, discountPercent, assignedProducts, isActive } = req.body.data || req.body;
 
   const user = b2bUsers.find(u => u.id === id);
   if (!user) return res.status(404).json({ ok: false, data: null, message: 'B2B user not found.' });
@@ -2162,6 +2168,7 @@ app.put('/datepalm-bay/api/admin/b2b/users/edit', (req, res) => {
   if (companyName !== undefined) user.companyName = companyName;
   if (contactEmail !== undefined) user.contactEmail = contactEmail;
   if (discountPercent !== undefined) user.discountPercent = parseFloat(discountPercent) || 0;
+  if (assignedProducts !== undefined) user.assignedProducts = Array.isArray(assignedProducts) ? assignedProducts : [];
   if (isActive !== undefined) user.isActive = isActive;
 
   saveData();
