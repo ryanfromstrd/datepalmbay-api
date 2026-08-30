@@ -2094,12 +2094,13 @@ app.get('/datepalm-bay/api/b2b/products', (req, res) => {
   const user = b2bUsers.find(u => u.id === session.userId);
   const assignedProducts = user?.assignedProducts || [];
   const productPrices = user?.productPrices || {};
+  const customItems = user?.customItems || [];
   let activeProducts = products.filter(p => p.productSaleStatus === true || p.productSaleStatus === 'true');
   if (assignedProducts.length > 0) {
     activeProducts = activeProducts.filter(p => assignedProducts.includes(p.productCode));
   }
 
-  console.log(`[B2B] products 전체: ${products.length}, 판매중: ${activeProducts.length}, discount: ${discountPercent}%, 지정상품: ${assignedProducts.length || '전체'}`);
+  console.log(`[B2B] products 전체: ${products.length}, 판매중: ${activeProducts.length}, discount: ${discountPercent}%, 지정상품: ${assignedProducts.length || '전체'}, 커스텀: ${customItems.length}`);
 
   const b2bProducts = activeProducts.map(p => {
     const listPrice = p.productRegularPrice || p.regularPrice || p.price || 0;
@@ -2119,13 +2120,30 @@ app.get('/datepalm-bay/api/b2b/products', (req, res) => {
       thumbnailUrl: (p.mainImages && p.mainImages[0]?.url) || p.thumbnailUrl || '',
       brand: p.brand || '',
       category: p.category || '',
+      isCustom: false,
     };
   });
 
+  const b2bCustomItems = customItems.map(c => ({
+    code: c.id,
+    name: c.name,
+    summary: '',
+    regularPrice: c.price,
+    retailPrice: c.price,
+    b2bPrice: c.price,
+    discountPercent: 0,
+    thumbnailUrl: '',
+    brand: '',
+    category: '',
+    isCustom: true,
+  }));
+
+  const allItems = [...b2bProducts, ...b2bCustomItems];
+
   res.json({
     ok: true,
-    data: b2bProducts,
-    message: `${b2bProducts.length} products retrieved`,
+    data: allItems,
+    message: `${allItems.length} products retrieved`,
   });
 });
 
@@ -2148,12 +2166,25 @@ app.post('/datepalm-bay/api/b2b/order/create', (req, res) => {
 
   const assignedProducts = user.assignedProducts || [];
   const productPrices = user.productPrices || {};
+  const customItems = user.customItems || [];
   const discountPercent = user.discountPercent || 0;
 
   const orderItems = [];
   for (const item of items) {
     const quantity = parseInt(item.quantity, 10);
     if (!item.code || !quantity || quantity <= 0) continue;
+
+    const customItem = customItems.find(c => c.id === item.code);
+    if (customItem) {
+      orderItems.push({
+        code: customItem.id,
+        name: customItem.name,
+        quantity,
+        unitPrice: customItem.price,
+        lineTotal: Math.round(customItem.price * quantity * 100) / 100,
+      });
+      continue;
+    }
 
     const product = products.find(p => p.productCode === item.code && (p.productSaleStatus === true || p.productSaleStatus === 'true'));
     if (!product) {
@@ -2304,6 +2335,7 @@ app.post('/datepalm-bay/api/admin/b2b/users/create', (req, res) => {
     discountPercent: parseFloat(discountPercent) || 0,
     assignedProducts: [],
     productPrices: {},
+    customItems: [],
     isActive: true,
     createdAt: new Date().toISOString(),
   };
@@ -2316,7 +2348,7 @@ app.post('/datepalm-bay/api/admin/b2b/users/create', (req, res) => {
 
 // B2B 유저 수정
 app.put('/datepalm-bay/api/admin/b2b/users/edit', (req, res) => {
-  const { id, password, companyName, contactEmail, discountPercent, assignedProducts, productPrices, isActive } = req.body.data || req.body;
+  const { id, password, companyName, contactEmail, discountPercent, assignedProducts, productPrices, customItems, isActive } = req.body.data || req.body;
 
   const user = b2bUsers.find(u => u.id === id);
   if (!user) return res.status(404).json({ ok: false, data: null, message: 'B2B user not found.' });
@@ -2327,6 +2359,13 @@ app.put('/datepalm-bay/api/admin/b2b/users/edit', (req, res) => {
   if (discountPercent !== undefined) user.discountPercent = parseFloat(discountPercent) || 0;
   if (assignedProducts !== undefined) user.assignedProducts = Array.isArray(assignedProducts) ? assignedProducts : [];
   if (productPrices !== undefined) user.productPrices = (productPrices && typeof productPrices === 'object') ? productPrices : {};
+  if (customItems !== undefined) {
+    user.customItems = Array.isArray(customItems)
+      ? customItems
+          .filter(c => c && c.id && c.name && !isNaN(parseFloat(c.price)))
+          .map(c => ({ id: String(c.id), name: String(c.name), price: parseFloat(c.price) }))
+      : [];
+  }
   if (isActive !== undefined) user.isActive = isActive;
 
   saveData();
