@@ -2176,7 +2176,7 @@ app.post('/datepalm-bay/api/b2b/order/create', async (req, res) => {
 
   const { items, shippingCost } = req.body.data || req.body;
   if (!Array.isArray(items) || items.length === 0) {
-    return res.status(400).json({ ok: false, data: null, message: 'At least one item with a box count is required.' });
+    return res.status(400).json({ ok: false, data: null, message: 'At least one item with a quantity is required.' });
   }
 
   const user = b2bUsers.find(u => u.id === session.userId);
@@ -2205,18 +2205,20 @@ app.post('/datepalm-bay/api/b2b/order/create', async (req, res) => {
 
   const orderItems = [];
   for (const item of items) {
-    const boxes = parseInt(item.boxes, 10);
-    if (!item.code || !boxes || boxes <= 0) continue;
+    const boxes = Math.max(0, parseInt(item.boxes, 10) || 0);
+    const units = Math.max(0, parseInt(item.units, 10) || 0);
+    if (!item.code || (boxes <= 0 && units <= 0)) continue;
 
     const customItem = customItems.find(c => c.id === item.code);
     if (customItem) {
       const unitsPerBox = parseInt(customItem.unitsPerBox, 10) > 0 ? parseInt(customItem.unitsPerBox, 10) : 1;
-      const quantity = boxes * unitsPerBox;
+      const quantity = boxes * unitsPerBox + units;
       const unitPrice = toTargetCurrency(customItem.price);
       orderItems.push({
         code: customItem.id,
         name: customItem.name,
         boxes,
+        units,
         unitsPerBox,
         quantity,
         unitPrice,
@@ -2238,7 +2240,7 @@ app.post('/datepalm-bay/api/b2b/order/create', async (req, res) => {
     }
 
     const unitsPerBox = parseInt(unitsPerBoxMap[item.code], 10) > 0 ? parseInt(unitsPerBoxMap[item.code], 10) : 1;
-    const quantity = boxes * unitsPerBox;
+    const quantity = boxes * unitsPerBox + units;
     const listPrice = product.productRegularPrice || product.regularPrice || product.price || 0;
     const priceOverride = productPrices[item.code];
     const unitPriceUSD = (priceOverride !== undefined && priceOverride !== null && priceOverride !== '')
@@ -2250,6 +2252,7 @@ app.post('/datepalm-bay/api/b2b/order/create', async (req, res) => {
       code: item.code,
       name: product.productName,
       boxes,
+      units,
       unitsPerBox,
       quantity,
       unitPrice,
